@@ -20,7 +20,7 @@ Flat C/C++ plugin at the repo root (Qt6, libobs, obs-frontend-api):
 ## Build & test
 From README: out-of-tree build with `cmake -S . -B build -DBUILD_OUT_OF_TREE=On && cmake --build build` (needs OBS development files); in-tree build by checking this repo out into OBS's `UI/frontend-plugins/vertical-canvas` and adding `add_subdirectory(vertical-canvas)`. `CMakePresets.json` defines presets `windows-x64`, `macos`, `ubuntu-x86_64`, `linux-aarch64` (+ `-ci`); the exact CTD invocation: TBD (owner to confirm). No automated tests in the repo.
 - Windows (and Linux, TBD) test builds on the **PC**; the macOS build on the **Mac**.
-- Cloud sessions cannot build this. Tag PRs `Needs local build: PC` or `Needs local build: Mac`.
+- Cloud sessions cannot build this. Tag PRs `needs-build:pc` or `needs-build:mac`.
 - Formatting: `.clang-format`, `.cmake-format.json`; CI has a format check.
 
 ## Release
