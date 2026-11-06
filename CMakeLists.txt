@@ -1,3 +1,74 @@
+# Built as a core module inside CTD OBS (plugins/ctd-vertical-canvas in the ctd-obs repo), using OBS's own targets,
+# compiler settings and install rules. The module keeps the name 'vertical-canvas'. No version check against Aitum's
+# server: the module ships and updates with CTD OBS. Everything below this block is the upstream build.
+if(CMAKE_PROJECT_NAME STREQUAL "obs-studio")
+  find_package(Qt6 REQUIRED Core Widgets)
+  find_package(CURL REQUIRED)
+
+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/buildspec.json" _vc_buildspec)
+  string(JSON _vc_version GET "${_vc_buildspec}" version)
+  # version.h.in reads these; they are set for this folder only
+  set(PROJECT_VERSION "${_vc_version}")
+  string(REPLACE "." ";" _vc_version_parts "${_vc_version}")
+  list(GET _vc_version_parts 0 PROJECT_VERSION_MAJOR)
+  list(GET _vc_version_parts 1 PROJECT_VERSION_MINOR)
+  list(GET _vc_version_parts 2 PROJECT_VERSION_PATCH)
+  configure_file(version.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/version.h")
+
+  add_library(vertical-canvas MODULE)
+  add_library(OBS::vertical-canvas ALIAS vertical-canvas)
+  target_sources(
+    vertical-canvas
+    PRIVATE
+      audio-wrapper-source.c
+      audio-wrapper-source.h
+      config-dialog.cpp
+      config-dialog.hpp
+      display-helpers.hpp
+      file-updater.c
+      file-updater.h
+      hotkey-edit.cpp
+      hotkey-edit.hpp
+      multi-canvas-source.c
+      multi-canvas-source.h
+      name-dialog.cpp
+      name-dialog.hpp
+      obs-websocket-api.h
+      projector.cpp
+      projector.hpp
+      qt-display.cpp
+      qt-display.hpp
+      resources.qrc
+      scenes-dock.cpp
+      scenes-dock.hpp
+      source-tree.cpp
+      source-tree.hpp
+      sources-dock.cpp
+      sources-dock.hpp
+      transitions-dock.cpp
+      transitions-dock.hpp
+      vertical-canvas.cpp
+      vertical-canvas.hpp
+  )
+  # The generated version.h comes first, ahead of any stale one left in the source folder by an upstream build
+  target_include_directories(
+    vertical-canvas
+    BEFORE
+    PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated" "${CMAKE_CURRENT_SOURCE_DIR}"
+  )
+  target_compile_definitions(vertical-canvas PRIVATE VERTICAL_CANVAS_NO_UPDATE_CHECK)
+  target_link_libraries(vertical-canvas PRIVATE OBS::frontend-api OBS::libobs Qt::Core Qt::Widgets CURL::libcurl)
+  if((OS_LINUX OR OS_FREEBSD OR OS_OPENBSD) AND Qt6_VERSION VERSION_LESS "6.9.0")
+    find_package(Qt6 REQUIRED GuiPrivate)
+    target_link_libraries(vertical-canvas PRIVATE Qt::GuiPrivate)
+  endif()
+  set_target_properties_obs(
+    vertical-canvas
+    PROPERTIES FOLDER plugins/ctd-vertical-canvas PREFIX "" AUTOMOC ON AUTOUIC ON AUTORCC ON
+  )
+  return()
+endif()
+
 # --- Detect if the plugin is build out of tree or not ---
 if(CMAKE_PROJECT_NAME STREQUAL "obs-studio")
   set(BUILD_OUT_OF_TREE OFF)

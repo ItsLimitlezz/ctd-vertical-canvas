@@ -710,6 +710,7 @@ void obs_module_post_load(void)
 	}
 	obs_data_array_release(canvas);
 
+#ifndef VERTICAL_CANVAS_NO_UPDATE_CHECK
 	std::string url = "https://api.aitum.tv/plugin/vertical?version=" PROJECT_VERSION;
 	const char *pguid = config_get_string(obs_frontend_get_app_config(), "General", "InstallGUID");
 	if (pguid) {
@@ -718,6 +719,7 @@ void obs_module_post_load(void)
 	}
 
 	version_update_info = update_info_create_single("[Vertical Canvas]", "OBS", url.c_str(), version_info_downloaded, nullptr);
+#endif
 
 	if (!vendor) {
 		vendor = obs_websocket_register_vendor("aitum-vertical-canvas");
