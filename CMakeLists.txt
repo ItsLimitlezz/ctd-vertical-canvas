@@ -1,9 +1,8 @@
 # Built as a core module inside CTD OBS (plugins/ctd-vertical-canvas in the ctd-obs repo), using OBS's own targets,
-# compiler settings and install rules. The module keeps the name 'vertical-canvas'. No version check against Aitum's
-# server: the module ships and updates with CTD OBS. Everything below this block is the upstream build.
+# compiler settings and install rules. The module keeps the name 'vertical-canvas'. No update check or other calls
+# to Aitum's servers: the module ships and updates with CTD OBS. Everything below this block is the upstream build.
 if(CMAKE_PROJECT_NAME STREQUAL "obs-studio")
   find_package(Qt6 REQUIRED Core Widgets)
-  find_package(CURL REQUIRED)
 
   file(READ "${CMAKE_CURRENT_SOURCE_DIR}/buildspec.json" _vc_buildspec)
   string(JSON _vc_version GET "${_vc_buildspec}" version)
@@ -25,8 +24,6 @@ if(CMAKE_PROJECT_NAME STREQUAL "obs-studio")
       config-dialog.cpp
       config-dialog.hpp
       display-helpers.hpp
-      file-updater.c
-      file-updater.h
       hotkey-edit.cpp
       hotkey-edit.hpp
       multi-canvas-source.c
@@ -56,8 +53,7 @@ if(CMAKE_PROJECT_NAME STREQUAL "obs-studio")
     BEFORE
     PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated" "${CMAKE_CURRENT_SOURCE_DIR}"
   )
-  target_compile_definitions(vertical-canvas PRIVATE VERTICAL_CANVAS_NO_UPDATE_CHECK)
-  target_link_libraries(vertical-canvas PRIVATE OBS::frontend-api OBS::libobs Qt::Core Qt::Widgets CURL::libcurl)
+  target_link_libraries(vertical-canvas PRIVATE OBS::frontend-api OBS::libobs Qt::Core Qt::Widgets)
   if((OS_LINUX OR OS_FREEBSD OR OS_OPENBSD) AND Qt6_VERSION VERSION_LESS "6.9.0")
     find_package(Qt6 REQUIRED GuiPrivate)
     target_link_libraries(vertical-canvas PRIVATE Qt::GuiPrivate)
@@ -119,11 +115,6 @@ PROPERTIES AUTOMOC ON
             AUTOUIC ON
             AUTORCC ON)
 
-if(BUILD_OUT_OF_TREE)
-  find_package(CURL REQUIRED)
-endif()
-target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl)
-
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/version.h.in ${CMAKE_CURRENT_SOURCE_DIR}/version.h)
 
 if(OS_WINDOWS)
@@ -142,7 +133,6 @@ target_sources(${PROJECT_NAME} PRIVATE
 	hotkey-edit.cpp
 	name-dialog.cpp
 	audio-wrapper-source.c
-	file-updater.c
 	multi-canvas-source.c
 	resources.qrc
 	vertical-canvas.hpp
@@ -158,7 +148,6 @@ target_sources(${PROJECT_NAME} PRIVATE
 	name-dialog.hpp
 	audio-wrapper-source.h
 	obs-websocket-api.h
-	file-updater.h
 	multi-canvas-source.h)
 
 if(BUILD_OUT_OF_TREE)

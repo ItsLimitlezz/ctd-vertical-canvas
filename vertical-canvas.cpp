@@ -6,7 +6,6 @@
 
 #include <obs-frontend-api.h>
 #include <obs-module.h>
-#include <QDesktopServices>
 
 #include <QGuiApplication>
 #include <QLineEdit>
@@ -15,7 +14,6 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QMouseEvent>
-#include <QPainter>
 #include <QPushButton>
 #include <QThread>
 #include <QTimer>
@@ -37,7 +35,6 @@
 #include "util/platform.h"
 #include "util/util.hpp"
 extern "C" {
-#include "file-updater.h"
 }
 
 #ifndef _WIN32
@@ -45,7 +42,7 @@ extern "C" {
 #endif
 
 OBS_DECLARE_MODULE()
-OBS_MODULE_AUTHOR("Aitum");
+OBS_MODULE_AUTHOR("CTD");
 OBS_MODULE_USE_DEFAULT_LOCALE("vertical-canvas", "en-US")
 
 #define HANDLE_RADIUS 4.0f
@@ -54,7 +51,9 @@ OBS_MODULE_USE_DEFAULT_LOCALE("vertical-canvas", "en-US")
 
 #define SPACER_LABEL_MARGIN 6.0f
 
-#define CANVAS_NAME "Aitum Vertical"
+#define CANVAS_NAME "Vertical"
+// Name upstream Aitum Vertical gave the canvas; an existing canvas with it is renamed on load
+#define LEGACY_CANVAS_NAME "Aitum Vertical"
 
 inline std::list<CanvasDock *> canvas_docks;
 
@@ -256,10 +255,6 @@ void frontend_event(obs_frontend_event event, void *private_data)
 			it->LoadScenes();
 			it->LogScenes();
 			it->FinishLoading();
-		}
-		if (!canvas_docks.empty()) {
-			auto cd = canvas_docks.front();
-			cd->AskUpdate();
 		}
 	} else if (event == OBS_FRONTEND_EVENT_SCENE_CHANGED) {
 		for (const auto &it : canvas_docks) {
@@ -780,24 +775,6 @@ void vendor_request_unpause_recording(obs_data_t *request_data, obs_data_t *resp
 	obs_data_set_bool(response_data, "success", false);
 }
 
-update_info_t *version_update_info = nullptr;
-
-bool version_info_downloaded(void *param, struct file_download_data *file)
-{
-	UNUSED_PARAMETER(param);
-	if (!file || !file->buffer.num) {
-		return true;
-	}
-	for (const auto &it : canvas_docks) {
-		QMetaObject::invokeMethod(it, "ApiInfo", Q_ARG(QString, QString::fromUtf8((const char *)file->buffer.array)));
-	}
-	if (version_update_info) {
-		update_info_destroy(version_update_info);
-		version_update_info = nullptr;
-	}
-	return true;
-}
-
 bool obs_module_load(void)
 {
 	if (obs_get_module("aitum-stream-suite")) {
@@ -878,17 +855,6 @@ void obs_module_post_load(void)
 	}
 	obs_data_array_release(canvas);
 
-#ifndef VERTICAL_CANVAS_NO_UPDATE_CHECK
-	std::string url = "https://api.aitum.tv/plugin/vertical?version=" PROJECT_VERSION;
-	const char *pguid = config_get_string(obs_frontend_get_app_config(), "General", "InstallGUID");
-	if (pguid) {
-		url += "&uuid=";
-		url += pguid;
-	}
-
-	version_update_info = update_info_create_single("[Vertical Canvas]", "OBS", url.c_str(), version_info_downloaded, nullptr);
-#endif
-
 	if (!vendor) {
 		vendor = obs_websocket_register_vendor("aitum-vertical-canvas");
 	}
@@ -944,10 +910,6 @@ void obs_module_unload(void)
 		obs_websocket_vendor_unregister_request(vendor, "unpause_recording");
 	}
 	obs_frontend_remove_event_callback(frontend_event, nullptr);
-	if (version_update_info) {
-		update_info_destroy(version_update_info);
-		version_update_info = nullptr;
-	}
 }
 
 MODULE_EXPORT const char *obs_module_description(void)
@@ -1447,7 +1409,6 @@ CanvasDock::CanvasDock(obs_data_t *settings, QWidget *parent)
 	streamButton->setChecked(false);
 	streamButton->setToolTip(QString::fromUtf8(obs_module_text("StreamVertical")));
 	streamButton->setStyleSheet(
-		QString::fromUtf8("QPushButton:checked{background: rgb(0,210,153);}") +
 		QString::fromUtf8(multi_rtmp ? "QPushButton{border-top-right-radius: 0; border-bottom-right-radius: 0;}" : ""));
 	connect(streamButton, SIGNAL(clicked()), this, SLOT(StreamButtonClicked()));
 	streamButtonGroup->layout()->addWidget(streamButton);
@@ -1474,7 +1435,6 @@ CanvasDock::CanvasDock(obs_data_t *settings, QWidget *parent)
 	recordButton->setIcon(recordInactiveIcon);
 	recordButton->setCheckable(true);
 	recordButton->setChecked(false);
-	recordButton->setStyleSheet(QString::fromUtf8("QPushButton:checked{background: rgb(255,0,0);}"));
 	recordButton->setToolTip(QString::fromUtf8(obs_module_text("RecordVertical")));
 	connect(recordButton, SIGNAL(clicked()), this, SLOT(RecordButtonClicked()));
 	buttonRow->addWidget(recordButton);
@@ -1491,7 +1451,7 @@ CanvasDock::CanvasDock(obs_data_t *settings, QWidget *parent)
 	replayButton->setToolTip(QString::fromUtf8(obs_module_text("BacktrackClipVertical")));
 	replayButton->setCheckable(true);
 	replayButton->setStyleSheet(QString::fromUtf8(
-		"QPushButton:checked{background: rgb(26,87,255);} QPushButton{width: 32px; padding-left: 0px; padding-right: 0px; border-top-left-radius: 0; border-bottom-left-radius: 0;}"));
+		"QPushButton{width: 32px; padding-left: 0px; padding-right: 0px; border-top-left-radius: 0; border-bottom-left-radius: 0;}"));
 	connect(replayButton, SIGNAL(clicked()), this, SLOT(ReplayButtonClicked()));
 
 	replayEnableButton = new QPushButton;
@@ -1501,7 +1461,7 @@ CanvasDock::CanvasDock(obs_data_t *settings, QWidget *parent)
 	replayEnableButton->setCheckable(true);
 	replayEnableButton->setChecked(false);
 	replayEnableButton->setStyleSheet(QString::fromUtf8(
-		"QPushButton:checked{background: rgb(26,87,255);} QPushButton{ border-top-right-radius: 0; border-bottom-right-radius: 0; width: 32px; padding-left: 0px; padding-right: 0px;}"));
+		"QPushButton{ border-top-right-radius: 0; border-bottom-right-radius: 0; width: 32px; padding-left: 0px; padding-right: 0px;}"));
 	replayEnable = new QCheckBox;
 	auto testl = new QHBoxLayout;
 	replayEnableButton->setLayout(testl);
@@ -1575,7 +1535,6 @@ CanvasDock::CanvasDock(obs_data_t *settings, QWidget *parent)
 	virtualCamButton->setIcon(virtualCamInactiveIcon);
 	virtualCamButton->setCheckable(true);
 	virtualCamButton->setChecked(false);
-	virtualCamButton->setStyleSheet(QString::fromUtf8("QPushButton:checked{background: rgb(192,128,0);}"));
 	virtualCamButton->setToolTip(QString::fromUtf8(obs_module_text("VirtualCameraVertical")));
 	connect(virtualCamButton, SIGNAL(clicked()), this, SLOT(VirtualCamButtonClicked()));
 	buttonRow->addWidget(virtualCamButton);
@@ -1628,39 +1587,6 @@ CanvasDock::CanvasDock(obs_data_t *settings, QWidget *parent)
 	configButton->setToolTip(QString::fromUtf8(obs_module_text("VerticalSettings")));
 	connect(configButton, SIGNAL(clicked()), this, SLOT(ConfigButtonClicked()));
 	buttonRow->addWidget(configButton);
-
-	auto aitumButtonGroupLayout = new QHBoxLayout();
-	aitumButtonGroupLayout->setContentsMargins(0, 0, 0, 0);
-	aitumButtonGroupLayout->setSpacing(0);
-
-	auto contributeButton = new QPushButton;
-	contributeButton->setMinimumHeight(30);
-	QPixmap pixmap(32, 32);
-	pixmap.fill(Qt::transparent);
-
-	QPainter painter(&pixmap);
-	QFont font = painter.font();
-	font.setPixelSize(32);
-	painter.setFont(font);
-	painter.drawText(pixmap.rect(), Qt::AlignCenter, "❤️");
-	contributeButton->setIcon(QIcon(pixmap));
-	contributeButton->setToolTip(QString::fromUtf8(obs_module_text("VerticalDonate")));
-	contributeButton->setStyleSheet(
-		QString::fromUtf8("QPushButton{ border-top-right-radius: 0; border-bottom-right-radius: 0;}"));
-	QPushButton::connect(contributeButton, &QPushButton::clicked,
-			     [] { QDesktopServices::openUrl(QUrl("https://aitum.tv/contribute")); });
-
-	aitumButtonGroupLayout->addWidget(contributeButton);
-
-	auto aitumButton = new QPushButton;
-	aitumButton->setMinimumHeight(30);
-	aitumButton->setIcon(QIcon(":/aitum/media/aitum.png"));
-	aitumButton->setToolTip(QString::fromUtf8("https://aitum.tv"));
-	aitumButton->setStyleSheet(QString::fromUtf8("QPushButton{border-top-left-radius: 0; border-bottom-left-radius: 0;}"));
-	connect(aitumButton, &QPushButton::clicked, [] { QDesktopServices::openUrl(QUrl("https://aitum.tv")); });
-	aitumButtonGroupLayout->addWidget(aitumButton);
-
-	buttonRow->addLayout(aitumButtonGroupLayout);
 
 	setStyleSheet(QString::fromUtf8("QPushButton{padding-left: 4px; padding-right: 4px;}"));
 
@@ -2527,7 +2453,7 @@ static obs_source_t *CreateLabel(float pixelRatio, int i)
 
 	struct dstr name;
 	dstr_init(&name);
-	dstr_printf(&name, "Aitum Vertical Preview spacing label %d", i);
+	dstr_printf(&name, "Vertical Preview spacing label %d", i);
 	OBSSource txtSource = obs_source_create_private(text_source_id, name.array, settings);
 	dstr_free(&name);
 	return txtSource;
@@ -5382,15 +5308,29 @@ bool CanvasDock::StartVideo()
 	obs_frontend_canvas_list cl = {};
 	obs_frontend_get_canvases(&cl);
 	for (size_t i = 0; i < cl.canvases.num; i++) {
-		if (strcmp(obs_canvas_get_name(cl.canvases.array[i]), CANVAS_NAME) == 0 &&
-		    !obs_canvas_removed(cl.canvases.array[i])) {
+		if (obs_canvas_removed(cl.canvases.array[i])) {
+			continue;
+		}
+		const char *n = obs_canvas_get_name(cl.canvases.array[i]);
+		if (strcmp(n, CANVAS_NAME) == 0) {
+			if (c) {
+				obs_canvas_release(c);
+			}
 			c = obs_canvas_get_ref(cl.canvases.array[i]);
 			break;
+		}
+		if (!c && strcmp(n, LEGACY_CANVAS_NAME) == 0) {
+			c = obs_canvas_get_ref(cl.canvases.array[i]);
 		}
 	}
 	obs_frontend_canvas_list_free(&cl);
 	if (canvas) {
 		obs_canvas_release(canvas);
+	}
+	if (c && strcmp(obs_canvas_get_name(c), LEGACY_CANVAS_NAME) == 0) {
+		// Scene collections saved before the rename keep the upstream name; the saved scenes stay on the same canvas
+		blog(LOG_INFO, "[Vertical] Renaming canvas '%s' to '%s'", LEGACY_CANVAS_NAME, CANVAS_NAME);
+		obs_canvas_set_name(c, CANVAS_NAME);
 	}
 	canvas = c ? c : obs_frontend_add_canvas(CANVAS_NAME, nullptr, PROGRAM);
 	auto ph = obs_get_proc_handler();
@@ -8780,119 +8720,6 @@ void CanvasDock::Nudge(int dist, MoveDir dir)
 	obs_scene_enum_items(scene, nudge_callback, &offset);
 }
 
-void RemoveWidget(QWidget *widget);
-
-void RemoveLayoutItem(QLayoutItem *item)
-{
-	if (!item) {
-		return;
-	}
-	RemoveWidget(item->widget());
-	if (item->layout()) {
-		while (QLayoutItem *item2 = item->layout()->takeAt(0)) {
-			RemoveLayoutItem(item2);
-		}
-	}
-	delete item;
-}
-
-void RemoveWidget(QWidget *widget)
-{
-	if (!widget) {
-		return;
-	}
-	if (widget->layout()) {
-		auto l = widget->layout();
-		QLayoutItem *item;
-		while (l->count() > 0 && (item = l->takeAt(0))) {
-			RemoveLayoutItem(item);
-		}
-		delete l;
-	}
-	delete widget;
-}
-
-void CanvasDock::ApiInfo(QString info)
-{
-	auto d = obs_data_create_from_json(info.toUtf8().constData());
-	if (!d) {
-		return;
-	}
-	auto data_obj = obs_data_get_obj(d, "data");
-	obs_data_release(d);
-	if (!data_obj) {
-		return;
-	}
-	auto version = obs_data_get_string(data_obj, "version");
-	int major;
-	int minor;
-	int patch;
-	if (sscanf(version, "%d.%d.%d", &major, &minor, &patch) == 3) {
-		auto sv = MAKE_SEMANTIC_VERSION(major, minor, patch);
-		if (sv > MAKE_SEMANTIC_VERSION(PROJECT_VERSION_MAJOR, PROJECT_VERSION_MINOR, PROJECT_VERSION_PATCH)) {
-			newer_version_available = QString::fromUtf8(version);
-			configButton->setStyleSheet(QString::fromUtf8("background: rgb(192,128,0);"));
-		}
-	}
-	time_t current_time = time(nullptr);
-	if (current_time < partnerBlockTime || current_time - partnerBlockTime > 1209600) {
-		obs_data_array_t *blocks = obs_data_get_array(data_obj, "partnerBlocks");
-		size_t count = obs_data_array_count(blocks);
-		size_t added_count = 0;
-		for (size_t i = count; i > 0; i--) {
-			obs_data_t *block = obs_data_array_item(blocks, i - 1);
-			auto block_type = obs_data_get_string(block, "type");
-			QBoxLayout *layout = nullptr;
-			if (strcmp(block_type, "LINK") == 0) {
-				auto button = new QPushButton(QString::fromUtf8(obs_data_get_string(block, "label")));
-				button->setStyleSheet(QString::fromUtf8(obs_data_get_string(block, "qss")));
-				auto url = QString::fromUtf8(obs_data_get_string(block, "data"));
-				connect(button, &QPushButton::clicked, [url] { QDesktopServices::openUrl(QUrl(url)); });
-				auto buttonRow = new QHBoxLayout;
-				buttonRow->addWidget(button);
-				layout = buttonRow;
-
-			} else if (strcmp(block_type, "IMAGE") == 0) {
-				auto image_data = QString::fromUtf8(obs_data_get_string(block, "data"));
-				if (image_data.startsWith("data:image/")) {
-					auto pos = image_data.indexOf(";");
-					auto format = image_data.mid(11, pos - 11);
-					QImage image;
-					if (image.loadFromData(QByteArray::fromBase64(image_data.mid(pos + 7).toUtf8().constData()),
-							       format.toUtf8().constData())) {
-						auto label = new AspectRatioPixmapLabel;
-						label->setPixmap(QPixmap::fromImage(image));
-						label->setAlignment(Qt::AlignCenter);
-						label->setStyleSheet(QString::fromUtf8(obs_data_get_string(block, "qss")));
-						auto labelRow = new QHBoxLayout;
-						labelRow->addWidget(label, 1, Qt::AlignCenter);
-						layout = labelRow;
-					}
-				}
-			}
-			if (layout) {
-				added_count++;
-				if (i == 1) {
-					auto closeButton = new QPushButton("🞫");
-					connect(closeButton, &QPushButton::clicked, [this, added_count] {
-						for (size_t j = 0; j < added_count; j++) {
-							auto item = mainLayout->takeAt(2);
-							RemoveLayoutItem(item);
-						}
-						partnerBlockTime = time(nullptr);
-						SaveSettings();
-					});
-					layout->addWidget(closeButton);
-				}
-				mainLayout->insertLayout(2, layout, 0);
-			}
-			obs_data_release(block);
-		}
-		obs_data_array_release(blocks);
-	}
-	obs_data_release(data_obj);
-}
-
 void CanvasDock::ProfileChanged()
 {
 	for (auto it = streamOutputs.begin(); it != streamOutputs.end(); ++it) {
@@ -9367,13 +9194,13 @@ void CanvasDock::UpdateMulti()
 		streamButtonMulti->setVisible(true);
 		multi_rtmp = true;
 		streamButton->setChecked(active_count > 0);
-		streamButton->setStyleSheet(QString::fromUtf8(
-			"QPushButton:checked{background: rgb(0,210,153);} QPushButton{border-top-right-radius: 0; border-bottom-right-radius: 0;}"));
+		streamButton->setStyleSheet(
+			QString::fromUtf8("QPushButton{border-top-right-radius: 0; border-bottom-right-radius: 0;}"));
 	} else if (enabled_count <= 1 && multi_rtmp) {
 		streamButtonMulti->setVisible(false);
 		multi_rtmp = false;
 		streamButton->setChecked(active_count > 0);
-		streamButton->setStyleSheet(QString::fromUtf8("QPushButton:checked{background: rgb(0,210,153);}"));
+		streamButton->setStyleSheet(QString());
 	}
 }
 
@@ -9421,7 +9248,7 @@ void CanvasDock::save_load(obs_data_t *save_data, bool saving, void *param)
 void CanvasDock::LogScenes()
 {
 	blog(LOG_INFO, "------------------------------------------------");
-	blog(LOG_INFO, "[Aitum Vertical] Canvas '%s' scenes:", obs_canvas_get_name(canvas));
+	blog(LOG_INFO, "[Vertical] Canvas '%s' scenes:", obs_canvas_get_name(canvas));
 	if (scenesDock && scenesDock->sceneList) {
 		for (int j = 0; j < scenesDock->sceneList->count(); j++) {
 			auto item = scenesDock->sceneList->item(j);
@@ -9518,63 +9345,6 @@ void CanvasDock::LogFilter(obs_source_t *, obs_source_t *filter, void *v_val)
 	}
 
 	blog(LOG_INFO, "%s- filter: '%s' (%s)", indent.c_str(), name, id);
-}
-
-void CanvasDock::AskUpdate()
-{
-	if (newer_version_available.isEmpty()) {
-		return;
-	}
-	auto parts = newer_version_available.split(".");
-	if (parts.count() < 3) {
-		return;
-	}
-	int major = parts.value(0).toInt();
-	int minor = parts.value(1).toInt();
-	int patch = parts.value(2).toInt();
-	auto sv = MAKE_SEMANTIC_VERSION(major, minor, patch);
-
-	char *path = obs_module_config_path("config.json");
-	if (!path) {
-		return;
-	}
-
-	obs_data_t *config = ctd_load_config(path);
-
-	auto skip_version = config ? obs_data_get_int(config, "skip_version") : 0;
-	if (sv == skip_version) {
-		obs_data_release(config);
-		bfree(path);
-		return;
-	}
-
-	auto main_window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
-
-	QMessageBox mb(QMessageBox::Question, QString::fromUtf8(obs_frontend_get_locale_string("Updater.Title")),
-		       QString::fromUtf8(obs_frontend_get_locale_string("Updater.Text")) + " " +
-			       QString::fromUtf8(obs_module_text("VerticalCanvas")) + " " + newer_version_available,
-		       QMessageBox::StandardButtons(), main_window);
-	auto update = mb.addButton(QString::fromUtf8(obs_frontend_get_locale_string("Updater.UpdateNow")), QMessageBox::YesRole);
-	auto remind =
-		mb.addButton(QString::fromUtf8(obs_frontend_get_locale_string("Updater.RemindMeLater")), QMessageBox::RejectRole);
-	auto skip = mb.addButton(QString::fromUtf8(obs_frontend_get_locale_string("Updater.Skip")), QMessageBox::NoRole);
-	mb.setDefaultButton(remind);
-	mb.exec();
-	if (mb.clickedButton() == update) {
-		QDesktopServices::openUrl(QUrl(QString::fromUtf8("https://aitum.tv/download/vertical")));
-	} else if (mb.clickedButton() == skip) {
-		if (!config) {
-			config = obs_data_create();
-		}
-		obs_data_set_int(config, "skip_version", sv);
-		if (ctd_save_config(config, path)) {
-			blog(LOG_INFO, "[Vertical Canvas] Saved settings");
-		} else {
-			blog(LOG_ERROR, "[Vertical Canvas] Failed saving settings");
-		}
-	}
-	obs_data_release(config);
-	bfree(path);
 }
 
 static bool copy_save_functions = false;
