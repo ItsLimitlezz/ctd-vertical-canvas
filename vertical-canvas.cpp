@@ -17,6 +17,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
+#include <QThread>
 #include <QTimer>
 #include <QToolBar>
 #include <QWidgetAction>
@@ -317,6 +318,77 @@ static void get_stream_output(void *data, calldata_t *cd)
 		calldata_set_ptr(cd, "output", it->GetStreamOutput(name));
 		return;
 	}
+}
+
+/* CTD: the canvas CTD Relay's vertical feed goes to: the first portrait canvas, else the first canvas */
+static CanvasDock *ctd_vertical_dock()
+{
+	for (const auto &it : canvas_docks) {
+		if (it->GetCanvasHeight() > it->GetCanvasWidth())
+			return it;
+	}
+	return canvas_docks.empty() ? nullptr : canvas_docks.front();
+}
+
+/* CTD: the canvas docks live on the UI thread; a proc can be called from any thread */
+template<typename F> static void ctd_run_on_ui_thread(F f)
+{
+	QObject *app = QCoreApplication::instance();
+	if (!app || QThread::currentThread() == app->thread())
+		f();
+	else
+		QMetaObject::invokeMethod(app, f, Qt::BlockingQueuedConnection);
+}
+
+/* CTD: void ctd_vertical_set_output(in string server, in string key, out bool success, out string error)
+ * Sets the vertical canvas's stream output (custom RTMP) to server + key and saves it, without opening a dialog. */
+static void ctd_vertical_set_output(void *data, calldata_t *cd)
+{
+	UNUSED_PARAMETER(data);
+	const char *server = calldata_string(cd, "server");
+	const char *key = calldata_string(cd, "key");
+	bool success = false;
+	std::string error;
+	if (!server || !*server || !key || !*key) {
+		error = "server and key are required";
+	} else {
+		const std::string s = server, k = key;
+		ctd_run_on_ui_thread([&] {
+			CanvasDock *dock = ctd_vertical_dock();
+			if (!dock) {
+				error = "no vertical canvas";
+				return;
+			}
+			success = dock->SetCtdStreamOutput(s, k, error);
+			if (success)
+				save_canvas();
+		});
+	}
+	if (success)
+		blog(LOG_INFO, "[Vertical Canvas] CTD: stream output set");
+	else
+		blog(LOG_WARNING, "[Vertical Canvas] CTD: stream output not set: %s", error.c_str());
+	calldata_set_bool(cd, "success", success);
+	calldata_set_string(cd, "error", error.c_str());
+}
+
+/* CTD: void ctd_vertical_get_output(out bool configured, out string name, out string server, out bool enabled,
+ * out bool active). Never returns the key. */
+static void ctd_vertical_get_output(void *data, calldata_t *cd)
+{
+	UNUSED_PARAMETER(data);
+	bool configured = false, enabled = false, active = false;
+	std::string name, server;
+	ctd_run_on_ui_thread([&] {
+		CanvasDock *dock = ctd_vertical_dock();
+		if (dock)
+			configured = dock->GetCtdStreamOutput(name, server, enabled, active);
+	});
+	calldata_set_bool(cd, "configured", configured);
+	calldata_set_string(cd, "name", name.c_str());
+	calldata_set_string(cd, "server", server.c_str());
+	calldata_set_bool(cd, "enabled", enabled);
+	calldata_set_bool(cd, "active", active);
 }
 
 static void add_chapter(void *data, calldata_t *cd)
@@ -666,6 +738,12 @@ bool obs_module_load(void)
 	proc_handler_add(ph, "void aitum_vertical_get_scene(in int width, in int height, out string scene)", get_scene, nullptr);
 	proc_handler_add(ph, "void aitum_vertical_switch_scene(in int width, in int height, in string scene)", switch_scene,
 			 nullptr);
+	proc_handler_add(ph, "void ctd_vertical_set_output(in string server, in string key, out bool success, out string error)",
+			 ctd_vertical_set_output, nullptr);
+	proc_handler_add(
+		ph,
+		"void ctd_vertical_get_output(out bool configured, out string name, out string server, out bool enabled, out bool active)",
+		ctd_vertical_get_output, nullptr);
 
 	return true;
 }
@@ -6186,8 +6264,9 @@ obs_encoder_t *CanvasDock::GetStreamVideoEncoder()
 	const char *mode = config_get_string(config, "Output", "Mode");
 
 	if (stream_advanced_settings) {
-		video_settings = stream_encoder_settings;
-		obs_data_addref(video_settings);
+		/* CTD: a copy, so the keyframe default below isn't saved as the user's own value */
+		video_settings = obs_data_create();
+		obs_data_apply(video_settings, stream_encoder_settings);
 		enc_id = stream_encoder.c_str();
 		if (record_advanced_settings) {
 			useRecordEncoder = record_encoder.empty();
@@ -6285,6 +6364,12 @@ obs_encoder_t *CanvasDock::GetStreamVideoEncoder()
 			}
 		}
 	}
+
+	/* CTD: CTD Relay (and Twitch) want a 2 s keyframe interval, like CTD OBS's main stream. Only when no value is
+	 * set: a user's explicit value (0 = auto included) is kept. keyint_sec is the property OBS's encoders share
+	 * (x264, NVENC, QSV, AMF, VideoToolbox, VA-API, AV1). */
+	if (!obs_data_has_user_value(video_settings, "keyint_sec"))
+		obs_data_set_int(video_settings, "keyint_sec", 2);
 
 	obs_encoder_t *se = nullptr;
 	for (auto it = streamOutputs.begin(); it != streamOutputs.end(); ++it) {
@@ -9087,6 +9172,93 @@ obs_output_t *CanvasDock::GetStreamOutput(std::string name)
 		}
 	}
 	return nullptr;
+}
+
+/* CTD: the output CTD Relay feeds is the one named kCtdOutputName; when there is none, an empty output (no server)
+ * is reused, else one is added. Other outputs are left as they are. */
+static const char *kCtdOutputName = "CTD Relay";
+
+bool CanvasDock::SetCtdStreamOutput(const std::string &server, const std::string &key, std::string &error)
+{
+	auto target = streamOutputs.end();
+	for (auto it = streamOutputs.begin(); it != streamOutputs.end(); ++it) {
+		if (it->name == kCtdOutputName) {
+			target = it;
+			break;
+		}
+	}
+	if (target == streamOutputs.end()) {
+		for (auto it = streamOutputs.begin(); it != streamOutputs.end(); ++it) {
+			if (it->stream_server.empty()) {
+				target = it;
+				break;
+			}
+		}
+	}
+	if (target != streamOutputs.end() && obs_output_active(target->output)) {
+		error = "the vertical stream is live; stop it first";
+		return false;
+	}
+	if (target == streamOutputs.end()) {
+		StreamServer ss;
+		std::string service_name = "vertical_canvas_stream_service_";
+		service_name += std::to_string(streamOutputs.size());
+		ss.service = obs_service_create("rtmp_custom", service_name.c_str(), nullptr, nullptr);
+		streamOutputs.push_back(ss);
+		target = streamOutputs.end() - 1;
+	} else if (!target->service || strcmp(obs_service_get_id(target->service), "rtmp_custom") != 0) {
+		/* e.g. an output that was WHIP: CTD Relay takes RTMP */
+		const char *old_name = target->service ? obs_service_get_name(target->service) : nullptr;
+		std::string service_name = old_name ? old_name : "vertical_canvas_stream_service_ctd";
+		obs_service_t *service = obs_service_create("rtmp_custom", service_name.c_str(), nullptr, nullptr);
+		if (target->output)
+			obs_output_set_service(target->output, service);
+		obs_service_release(target->service);
+		target->service = service;
+	}
+	if (!target->service) {
+		error = "couldn't create the stream service";
+		return false;
+	}
+	target->name = kCtdOutputName;
+	target->stream_server = server;
+	target->stream_key = key;
+	target->enabled = true;
+	if (target->settings) {
+		obs_data_set_string(target->settings, "name", target->name.c_str());
+		obs_data_set_string(target->settings, "stream_server", server.c_str());
+		obs_data_set_string(target->settings, "stream_key", key.c_str());
+		obs_data_set_bool(target->settings, "enabled", true);
+	}
+	UpdateMulti();
+	return true;
+}
+
+bool CanvasDock::GetCtdStreamOutput(std::string &name, std::string &server, bool &enabled, bool &active)
+{
+	auto found = streamOutputs.end();
+	for (auto it = streamOutputs.begin(); it != streamOutputs.end(); ++it) {
+		if (it->name == kCtdOutputName) {
+			found = it;
+			break;
+		}
+	}
+	if (found == streamOutputs.end()) {
+		/* not set by CTD Relay: report the first output that has a server */
+		for (auto it = streamOutputs.begin(); it != streamOutputs.end(); ++it) {
+			if (!it->stream_server.empty() && !it->stream_key.empty()) {
+				found = it;
+				break;
+			}
+		}
+	}
+	if (found == streamOutputs.end())
+		return false;
+	name = found->name;
+	server = found->stream_server;
+	enabled = found->enabled;
+	active = obs_output_active(found->output);
+	return !found->stream_server.empty() && !found->stream_key.empty();
 }
 
 void CanvasDock::UpdateMulti()
