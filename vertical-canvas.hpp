@@ -459,6 +459,9 @@ public:
 	void StartStreamOutput(std::string name);
 	void StopStreamOutput(std::string name);
 	obs_output_t *GetStreamOutput(std::string name);
+	// CTD: set/read the stream output CTD Relay feeds (procs ctd_vertical_set_output / ctd_vertical_get_output)
+	bool SetCtdStreamOutput(const std::string &server, const std::string &key, std::string &error);
+	bool GetCtdStreamOutput(std::string &name, std::string &server, bool &enabled, bool &active);
 	inline obs_output_t *GetRecordOutput() const { return obs_output_get_ref(recordOutput); }
 	void UpdateMulti();
 	void DisableStreamSettings();
