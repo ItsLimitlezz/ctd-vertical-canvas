@@ -434,7 +434,6 @@ private slots:
 	void SwitchBackToSelectedTransition();
 	void SceneRemoved(const QString name);
 
-	void ApiInfo(QString data);
 	void updateStreamKey(const QString &newStreamKey, int index);
 	void updateStreamServer(const QString &newStreamServer, int index);
 
@@ -474,7 +473,6 @@ public:
 	bool RecordingActive();
 	bool BacktrackActive();
 	bool VirtualCameraActive();
-	void AskUpdate();
 };
 
 class LockedCheckBox : public QCheckBox {

@@ -17,8 +17,6 @@
 #include <QRadioButton>
 #include <QPlainTextEdit>
 #include <QCompleter>
-#include <QDesktopServices>
-#include <QUrl>
 
 #include "hotkey-edit.hpp"
 #include "obs-module.h"
@@ -45,14 +43,6 @@ OBSBasicSettings::OBSBasicSettings(CanvasDock *canvas_dock, QMainWindow *parent)
 	listwidgetitem = new QListWidgetItem(listWidget);
 	listwidgetitem->setIcon(QIcon(QString::fromUtf8(":/settings/images/settings/output.svg")));
 	listwidgetitem->setText(QString::fromUtf8(obs_module_text("Recording")));
-
-	listwidgetitem = new QListWidgetItem(listWidget);
-	listwidgetitem->setIcon(canvasDock->GetIconFromType(OBS_ICON_TYPE_UNKNOWN));
-	listwidgetitem->setText(QString::fromUtf8(obs_module_text("Help")));
-
-	listwidgetitem = new QListWidgetItem(listWidget);
-	listwidgetitem->setIcon(QIcon(QString::fromUtf8(":/aitum/media/aitum.png")));
-	listwidgetitem->setText(QString::fromUtf8(obs_module_text("SupportButton")));
 
 	listWidget->setCurrentRow(0);
 	listWidget->setSpacing(1);
@@ -86,34 +76,6 @@ OBSBasicSettings::OBSBasicSettings(CanvasDock *canvas_dock, QMainWindow *parent)
 	scrollArea->setFrameShape(QFrame::NoFrame);
 	settingsPages->addWidget(scrollArea);
 
-	auto helpPage = new QWidget;
-	scrollArea = new QScrollArea;
-	scrollArea->setWidget(helpPage);
-	scrollArea->setWidgetResizable(true);
-	scrollArea->setLineWidth(0);
-	scrollArea->setFrameShape(QFrame::NoFrame);
-	settingsPages->addWidget(scrollArea);
-
-	// Support page
-	QWidget *supportPage = new QWidget;
-	auto supportPageLayout = new QVBoxLayout;
-	supportPage->setLayout(supportPageLayout);
-
-	auto supportInfoBox = new QGroupBox(QString::fromUtf8(obs_module_text("SupportTitle")));
-	supportInfoBox->setStyleSheet("padding-top: 12px");
-	auto supportLayout = new QVBoxLayout;
-	supportInfoBox->setLayout(supportLayout);
-
-	auto supportLabel = new QLabel(QString::fromUtf8(obs_module_text("SupportText")));
-	supportLabel->setStyleSheet("font-size: 14px");
-	supportLabel->setWordWrap(true);
-	supportLabel->setTextFormat(Qt::RichText);
-	supportLabel->setOpenExternalLinks(true);
-	supportLayout->addWidget(supportLabel, 1);
-	supportPageLayout->addWidget(supportInfoBox, 1, Qt::AlignTop);
-
-	settingsPages->addWidget(supportPage);
-
 	connect(listWidget, &QListWidget::currentRowChanged, settingsPages, &QStackedWidget::setCurrentIndex);
 
 	auto generalGroup = new QGroupBox;
@@ -130,10 +92,6 @@ OBSBasicSettings::OBSBasicSettings(CanvasDock *canvas_dock, QMainWindow *parent)
 	auto general_title = new QLabel(QString::fromUtf8(obs_module_text("General")));
 	general_title->setStyleSheet(QString::fromUtf8("font-weight: bold;"));
 	general_title_layout->addWidget(general_title, 0, Qt::AlignLeft);
-	auto guide_link = new QLabel(QString::fromUtf8("<a href=\"https://l.aitum.tv/vh-general-settings\">") +
-				     QString::fromUtf8(obs_module_text("ViewGuide")) + QString::fromUtf8("</a>"));
-	guide_link->setOpenExternalLinks(true);
-	general_title_layout->addWidget(guide_link, 0, Qt::AlignRight);
 
 	generalLayout->addRow(general_title_layout);
 
@@ -184,10 +142,6 @@ OBSBasicSettings::OBSBasicSettings(CanvasDock *canvas_dock, QMainWindow *parent)
 	auto backtrack_title = new QLabel(QString::fromUtf8(obs_module_text("Backtrack")));
 	backtrack_title->setStyleSheet(QString::fromUtf8("font-weight: bold;"));
 	backtrack_title_layout->addWidget(backtrack_title, 0, Qt::AlignLeft);
-	guide_link = new QLabel(QString::fromUtf8("<a href=\"https://l.aitum.tv/vh-backtrack-settings\">") +
-				QString::fromUtf8(obs_module_text("ViewGuide")) + QString::fromUtf8("</a>"));
-	guide_link->setOpenExternalLinks(true);
-	backtrack_title_layout->addWidget(guide_link, 0, Qt::AlignRight);
 
 	backtrackLayout->addRow(backtrack_title_layout);
 
@@ -316,10 +270,6 @@ OBSBasicSettings::OBSBasicSettings(CanvasDock *canvas_dock, QMainWindow *parent)
 	auto streaming_title = new QLabel(QString::fromUtf8(obs_module_text("Streaming")));
 	streaming_title->setStyleSheet(QString::fromUtf8("font-weight: bold;"));
 	streaming_title_layout->addWidget(streaming_title, 0, Qt::AlignLeft);
-	guide_link = new QLabel(QString::fromUtf8("<a href=\"https://l.aitum.tv/vh-streaming-settings\">") +
-				QString::fromUtf8(obs_module_text("ViewGuide")) + QString::fromUtf8("</a>"));
-	guide_link->setOpenExternalLinks(true);
-	streaming_title_layout->addWidget(guide_link, 0, Qt::AlignRight);
 
 	streamingLayout->addRow(streaming_title_layout);
 
@@ -534,11 +484,11 @@ OBSBasicSettings::OBSBasicSettings(CanvasDock *canvas_dock, QMainWindow *parent)
 	if (canvasDock->disable_stream_settings) {
 		auto multistream_warning_widget = new QGroupBox(QString::fromUtf8(obs_frontend_get_locale_string("Warning")));
 		auto multistream_warning_layout = new QVBoxLayout;
-		multistream_warning_widget->setStyleSheet(
-			"QGroupBox { background: #332701; border: 1px solid #997404; color: #ffda6a; padding-top: 16px; }");
+		multistream_warning_widget->setProperty("class", "bg-warning text-warning");
+		multistream_warning_widget->setStyleSheet("QGroupBox { padding-top: 16px; }");
 
 		auto multistream_warning_label = new QLabel(QString::fromUtf8(obs_module_text("OutputsMultistream")));
-		multistream_warning_label->setStyleSheet("color: #ffda6a; font-weight: bold;");
+		multistream_warning_label->setProperty("class", "text-warning text-bold");
 
 		multistream_warning_layout->addWidget(multistream_warning_label);
 		multistream_warning_widget->setLayout(multistream_warning_layout);
@@ -569,10 +519,6 @@ OBSBasicSettings::OBSBasicSettings(CanvasDock *canvas_dock, QMainWindow *parent)
 	auto record_title = new QLabel(QString::fromUtf8(obs_module_text("Recording")));
 	record_title->setStyleSheet(QString::fromUtf8("font-weight: bold;"));
 	record_title_layout->addWidget(record_title, 0, Qt::AlignLeft);
-	guide_link = new QLabel(QString::fromUtf8("<a href=\"https://l.aitum.tv/vh-recording-settings\">") +
-				QString::fromUtf8(obs_module_text("ViewGuide")) + QString::fromUtf8("</a>"));
-	guide_link->setOpenExternalLinks(true);
-	record_title_layout->addWidget(guide_link, 0, Qt::AlignRight);
 
 	recordLayout->addRow(record_title_layout);
 
@@ -883,62 +829,6 @@ OBSBasicSettings::OBSBasicSettings(CanvasDock *canvas_dock, QMainWindow *parent)
 	vb->addStretch();
 	recordingPage->setLayout(vb);
 
-	// HELP PAGE
-	auto helpButtonGroup = new QWidget();
-	auto helpButtonGroupLayout = new QVBoxLayout();
-	helpButtonGroupLayout->setContentsMargins(0, 0, 0, 0);
-
-	helpButtonGroupLayout->setSpacing(5);
-	helpButtonGroup->setLayout(helpButtonGroupLayout);
-
-	// intro text
-	auto helpTitle = new QLabel;
-	helpTitle->setText(QString::fromUtf8(obs_module_text("Help")));
-	helpTitle->setStyleSheet(QString::fromUtf8("font-weight: bold;"));
-	helpButtonGroupLayout->addWidget(helpTitle);
-
-	// intro desc
-	auto introDesc = new QLabel;
-	introDesc->setText(QString::fromUtf8(obs_module_text("HelpIntro")));
-
-	helpButtonGroupLayout->addWidget(introDesc);
-
-	// troubleshooter button
-	auto tsButton = new QPushButton;
-	tsButton->setObjectName(QStringLiteral("tsButton"));
-	tsButton->setCheckable(false);
-	tsButton->setText(QString::fromUtf8(obs_module_text("HelpTroubleshooterButton")));
-
-	connect(tsButton, &QPushButton::clicked, [] { QDesktopServices::openUrl(QUrl("https://l.aitum.tv/vh-ts")); });
-
-	helpButtonGroupLayout->addWidget(tsButton);
-
-	// guides button
-	auto guideButton = new QPushButton;
-	guideButton->setObjectName(QStringLiteral("guideButton"));
-	guideButton->setCheckable(false);
-	guideButton->setText(QString::fromUtf8(obs_module_text("HelpGuideButton")));
-
-	connect(guideButton, &QPushButton::clicked, [] { QDesktopServices::openUrl(QUrl("https://l.aitum.tv/vh-guides")); });
-
-	helpButtonGroupLayout->addWidget(guideButton);
-
-	// discord button
-	auto discordButton = new QPushButton;
-	discordButton->setObjectName(QStringLiteral("discordButton"));
-	discordButton->setCheckable(false);
-	discordButton->setText(QString::fromUtf8(obs_module_text("HelpDiscordButton")));
-
-	connect(discordButton, &QPushButton::clicked, [] { QDesktopServices::openUrl(QUrl("https://aitum.tv/discord")); });
-
-	helpButtonGroupLayout->addWidget(discordButton);
-
-	vb = new QVBoxLayout;
-	vb->setContentsMargins(0, 0, 0, 0);
-	vb->addWidget(helpButtonGroup);
-	vb->addStretch();
-	helpPage->setLayout(vb);
-
 	QPushButton *okButton = new QPushButton(QString::fromUtf8(obs_frontend_get_locale_string("OK")));
 	connect(okButton, &QPushButton::clicked, [this] {
 		SaveSettings();
@@ -955,9 +845,9 @@ OBSBasicSettings::OBSBasicSettings(CanvasDock *canvas_dock, QMainWindow *parent)
 
 	QHBoxLayout *bottomLayout = new QHBoxLayout;
 	const auto version =
-		new QLabel(QString::fromUtf8(obs_module_text("Version")) + " " + QString::fromUtf8(PROJECT_VERSION) + " " +
-			   QString::fromUtf8(obs_module_text("MadeBy")) + " <a href=\"https://aitum.tv\">Aitum</a>");
-	version->setOpenExternalLinks(true);
+		new QLabel(QString::fromUtf8(obs_module_text("Version")) + " " + QString::fromUtf8(PROJECT_VERSION) + " - " +
+			   QString::fromUtf8(obs_module_text("BasedOn")));
+	version->setProperty("class", "text-muted");
 	version->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
 
 	newVersion = new QLabel;
