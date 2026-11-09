@@ -6264,8 +6264,9 @@ obs_encoder_t *CanvasDock::GetStreamVideoEncoder()
 	const char *mode = config_get_string(config, "Output", "Mode");
 
 	if (stream_advanced_settings) {
-		video_settings = stream_encoder_settings;
-		obs_data_addref(video_settings);
+		/* CTD: a copy, so the keyframe default below isn't saved as the user's own value */
+		video_settings = obs_data_create();
+		obs_data_apply(video_settings, stream_encoder_settings);
 		enc_id = stream_encoder.c_str();
 		if (record_advanced_settings) {
 			useRecordEncoder = record_encoder.empty();
@@ -6363,6 +6364,12 @@ obs_encoder_t *CanvasDock::GetStreamVideoEncoder()
 			}
 		}
 	}
+
+	/* CTD: CTD Relay (and Twitch) want a 2 s keyframe interval, like CTD OBS's main stream. Only when no value is
+	 * set: a user's explicit value (0 = auto included) is kept. keyint_sec is the property OBS's encoders share
+	 * (x264, NVENC, QSV, AMF, VideoToolbox, VA-API, AV1). */
+	if (!obs_data_has_user_value(video_settings, "keyint_sec"))
+		obs_data_set_int(video_settings, "keyint_sec", 2);
 
 	obs_encoder_t *se = nullptr;
 	for (auto it = streamOutputs.begin(); it != streamOutputs.end(); ++it) {
