@@ -34,6 +34,9 @@
 #define VIRTUAL_CAMERA_MAIN 1
 #define VIRTUAL_CAMERA_BOTH 2
 
+/* CTD: the vertical stream's keyframe interval when the user hasn't set one (CTD Relay and Twitch want 2 s) */
+#define CTD_DEFAULT_KEYINT_SEC 2
+
 enum class ItemHandle : uint32_t {
 	None = 0,
 	TopLeft = ITEM_TOP | ITEM_LEFT,
