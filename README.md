@@ -1,6 +1,8 @@
 # Vertical Canvas for OBS Studio
 
-Plugin for [OBS Studio](https://github.com/obsproject/obs-studio) to add vertical canvas by [![Aitum logo](media/aitum.png) Aitum](https://aitum.tv)
+Plugin for [OBS Studio](https://github.com/obsproject/obs-studio) to add vertical canvas by [Aitum](https://aitum.tv)
+
+> **CTD fork.** This is a modified version of Aitum Vertical, built into CTD OBS as the "Vertical" module. The CTD changes are listed in [CTD-CHANGES.md](CTD-CHANGES.md). The support links below are upstream's; CTD OBS users should not contact Aitum for help with this build.
 
 # Support
 
