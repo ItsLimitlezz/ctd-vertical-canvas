@@ -90,36 +90,125 @@ static void ensure_directory(char *path)
 #endif
 }
 
-static void save_canvas()
+/* CTD: config.json is saved with obs_data_save_json_safe (write config.json.tmp, then swap it in and keep the old
+ * file as config.json.bak; ReplaceFileW on Windows). When that swap didn't land, the newest settings sat in .bak or
+ * .tmp while the plugin kept loading the stale config.json, so a stream output set by ctd_vertical_set_output was
+ * lost on restart. Each save now stamps the canvas entries with a sequence number and checks that config.json really
+ * holds what was saved (else writes it directly), and loading takes the newest of config.json, .bak and .tmp. */
+static const char *kCtdSaveSeq = "ctd_save_seq";
+static long long ctd_last_save_seq = 0;
+
+static long long ctd_config_seq(obs_data_t *config)
+{
+	long long seq = 0;
+	obs_data_array_t *canvas = obs_data_get_array(config, "canvas");
+	if (canvas && obs_data_array_count(canvas)) {
+		obs_data_t *first = obs_data_array_item(canvas, 0);
+		seq = obs_data_get_int(first, kCtdSaveSeq);
+		obs_data_release(first);
+	}
+	obs_data_array_release(canvas);
+	return seq;
+}
+
+/* CTD: the newest readable copy of config.json (config.json itself, its .bak or a leftover .tmp), or nullptr */
+static obs_data_t *ctd_load_config(const char *path)
+{
+	const char *exts[] = {"", ".bak", ".tmp"};
+	obs_data_t *best = nullptr;
+	long long best_seq = -1;
+	const char *best_ext = "";
+	for (const char *ext : exts) {
+		std::string file = std::string(path) + ext;
+		if (!os_file_exists(file.c_str()))
+			continue;
+		obs_data_t *data = obs_data_create_from_json_file(file.c_str());
+		if (!data) {
+			blog(LOG_WARNING, "[Vertical Canvas] Couldn't read config.json%s", ext);
+			continue;
+		}
+		const long long seq = ctd_config_seq(data);
+		if (seq > best_seq) { /* a tie keeps the earlier file, config.json first */
+			obs_data_release(best);
+			best = data;
+			best_seq = seq;
+			best_ext = ext;
+		} else {
+			obs_data_release(data);
+		}
+	}
+	if (best && *best_ext)
+		blog(LOG_WARNING, "[Vertical Canvas] config.json%s is newer than config.json, loading it", best_ext);
+	if (best_seq > ctd_last_save_seq)
+		ctd_last_save_seq = best_seq;
+	return best;
+}
+
+static bool ctd_file_holds(const char *path, const std::string &json)
+{
+	char *on_disk = os_quick_read_utf8_file(path);
+	const bool same = on_disk && json == on_disk;
+	bfree(on_disk);
+	return same;
+}
+
+/* CTD: obs_data_save_json_safe, then make sure config.json really holds the new settings */
+static bool ctd_save_config(obs_data_t *config, const char *path)
+{
+	const char *json = obs_data_get_json(config);
+	if (!json || !*json)
+		return false;
+	const std::string expected = json;
+	if (obs_data_save_json_safe(config, path, "tmp", "bak") && ctd_file_holds(path, expected))
+		return true;
+	blog(LOG_WARNING, "[Vertical Canvas] Safe save didn't update config.json, writing it directly");
+	if (os_quick_write_utf8_file(path, expected.c_str(), expected.size(), false) && ctd_file_holds(path, expected)) {
+		const std::string tmp = std::string(path) + ".tmp";
+		if (os_file_exists(tmp.c_str()))
+			os_unlink(tmp.c_str());
+		return true;
+	}
+	return false;
+}
+
+static bool save_canvas()
 {
 	if (canvas_docks.empty()) {
-		return;
+		return false;
 	}
 	char *path = obs_module_config_path("config.json");
 	if (!path) {
-		return;
+		return false;
 	}
 	ensure_directory(path);
-	obs_data_t *config = obs_data_create_from_json_file_safe(path, "bak");
+	obs_data_t *config = ctd_load_config(path);
 	if (!config) {
 		config = obs_data_create();
 		blog(LOG_INFO, "[Vertical Canvas] New configuration file");
 	}
+	const long long seq = ++ctd_last_save_seq;
+	size_t outputs = 0;
 	const auto canvas = obs_data_array_create();
 	for (const auto &it : canvas_docks) {
 		obs_data_t *s = it->SaveSettings();
+		obs_data_set_int(s, kCtdSaveSeq, seq);
+		obs_data_array_t *so = obs_data_get_array(s, "stream_outputs");
+		outputs += obs_data_array_count(so);
+		obs_data_array_release(so);
 		obs_data_array_push_back(canvas, s);
 		obs_data_release(s);
 	}
 	obs_data_set_array(config, "canvas", canvas);
 	obs_data_array_release(canvas);
-	if (obs_data_save_json_safe(config, path, "tmp", "bak")) {
-		blog(LOG_INFO, "[Vertical Canvas] Saved settings");
+	const bool saved = ctd_save_config(config, path);
+	if (saved) {
+		blog(LOG_INFO, "[Vertical Canvas] Saved settings (save %lld, %zu stream outputs)", seq, outputs);
 	} else {
 		blog(LOG_ERROR, "[Vertical Canvas] Failed saving settings");
 	}
 	obs_data_release(config);
 	bfree(path);
+	return saved;
 }
 
 void transition_start(void *, calldata_t *)
@@ -341,7 +430,8 @@ template<typename F> static void ctd_run_on_ui_thread(F f)
 }
 
 /* CTD: void ctd_vertical_set_output(in string server, in string key, out bool success, out string error)
- * Sets the vertical canvas's stream output (custom RTMP) to server + key and saves it, without opening a dialog. */
+ * Sets the vertical canvas's stream output (custom RTMP) to server + key and saves it, without opening a dialog.
+ * If the output is set but config.json can't be saved, success is true and error says so. */
 static void ctd_vertical_set_output(void *data, calldata_t *cd)
 {
 	UNUSED_PARAMETER(data);
@@ -360,8 +450,8 @@ static void ctd_vertical_set_output(void *data, calldata_t *cd)
 				return;
 			}
 			success = dock->SetCtdStreamOutput(s, k, error);
-			if (success)
-				save_canvas();
+			if (success && !save_canvas())
+				error = "set, but config.json couldn't be saved, so it won't survive a restart";
 		});
 	}
 	if (success)
@@ -751,7 +841,7 @@ bool obs_module_load(void)
 void obs_module_post_load(void)
 {
 	const auto path = obs_module_config_path("config.json");
-	obs_data_t *config = obs_data_create_from_json_file_safe(path, "bak");
+	obs_data_t *config = path ? ctd_load_config(path) : nullptr;
 	bfree(path);
 	if (!config) {
 		config = obs_data_create();
@@ -6369,7 +6459,7 @@ obs_encoder_t *CanvasDock::GetStreamVideoEncoder()
 	 * set: a user's explicit value (0 = auto included) is kept. keyint_sec is the property OBS's encoders share
 	 * (x264, NVENC, QSV, AMF, VideoToolbox, VA-API, AV1). */
 	if (!obs_data_has_user_value(video_settings, "keyint_sec"))
-		obs_data_set_int(video_settings, "keyint_sec", 2);
+		obs_data_set_int(video_settings, "keyint_sec", CTD_DEFAULT_KEYINT_SEC);
 
 	obs_encoder_t *se = nullptr;
 	for (auto it = streamOutputs.begin(); it != streamOutputs.end(); ++it) {
@@ -9449,7 +9539,7 @@ void CanvasDock::AskUpdate()
 		return;
 	}
 
-	obs_data_t *config = obs_data_create_from_json_file_safe(path, "bak");
+	obs_data_t *config = ctd_load_config(path);
 
 	auto skip_version = config ? obs_data_get_int(config, "skip_version") : 0;
 	if (sv == skip_version) {
@@ -9477,7 +9567,7 @@ void CanvasDock::AskUpdate()
 			config = obs_data_create();
 		}
 		obs_data_set_int(config, "skip_version", sv);
-		if (obs_data_save_json_safe(config, path, "tmp", "bak")) {
+		if (ctd_save_config(config, path)) {
 			blog(LOG_INFO, "[Vertical Canvas] Saved settings");
 		} else {
 			blog(LOG_ERROR, "[Vertical Canvas] Failed saving settings");

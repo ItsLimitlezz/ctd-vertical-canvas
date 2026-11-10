@@ -507,6 +507,8 @@ OBSBasicSettings::OBSBasicSettings(CanvasDock *canvas_dock, QMainWindow *parent)
 		auto encoder = encoder_string.constData();
 		obs_data_release(stream_encoder_settings);
 		stream_encoder_settings = obs_encoder_defaults(encoder);
+		/* CTD: show the 2 s keyframe default the stream uses when no value is set (a default, so it isn't saved) */
+		obs_data_set_default_int(stream_encoder_settings, "keyint_sec", CTD_DEFAULT_KEYINT_SEC);
 		obs_data_apply(stream_encoder_settings, canvasDock->stream_encoder_settings);
 		if (stream_encoder_properties) {
 			obs_properties_destroy(stream_encoder_properties);
@@ -1216,9 +1218,17 @@ void OBSBasicSettings::LoadSettings()
 		streamingEncoder->setCurrentIndex(idx);
 	}
 
+	/* CTD: load the widgets from the dialog's settings (encoder defaults, the 2 s keyframe default, then the canvas's
+	 * own values), not from the canvas's values alone: those have no defaults, so an unset keyframe interval showed
+	 * 0 (auto) and could be saved as if the user had chosen it. Then keep only the canvas's own values as user values,
+	 * so defaults the widgets wrote back while loading aren't saved. */
+	obs_data_clear(stream_encoder_settings);
+	obs_data_apply(stream_encoder_settings, canvasDock->stream_encoder_settings);
 	for (const auto &kv : stream_encoder_property_widgets) {
-		LoadProperty(kv.first, canvasDock->stream_encoder_settings, kv.second);
+		LoadProperty(kv.first, stream_encoder_settings, kv.second);
 	}
+	obs_data_clear(stream_encoder_settings);
+	obs_data_apply(stream_encoder_settings, canvasDock->stream_encoder_settings);
 
 	recordPath->setText(QString::fromUtf8(canvasDock->recordPath));
 
