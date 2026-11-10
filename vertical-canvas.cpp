@@ -639,7 +639,8 @@ bool version_info_downloaded(void *param, struct file_download_data *file)
 bool obs_module_load(void)
 {
 	if (obs_get_module("aitum-stream-suite")) {
-		blog(LOG_ERROR, "[Vertical Canvas] Aitum Stream Suite detected, please uninstall it to use Vertical Canvas.");
+		blog(LOG_ERROR,
+		     "[Vertical Canvas] Another vertical canvas plugin (Aitum Stream Suite) is installed; remove it to use the CTD OBS vertical canvas.");
 		return false;
 	}
 
