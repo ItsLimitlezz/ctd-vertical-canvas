@@ -27,8 +27,8 @@ Base: Aitum Vertical 1.6.7.
   `config.json` and its keys (including `partner_block`, now unused), dock id `VerticalCanvasDock`, Qt resource prefix
   `/aitum`, proc handlers `aitum_vertical_*`, obs-websocket vendor `aitum-vertical-canvas`, bundle id in
   `buildspec.json`.
-- Mentions of other Aitum products by name: the "Aitum Stream Suite detected" log error and the Aitum Multistream
-  warning, since those name third-party plugins the user installed.
+- Mentions of other Aitum products by name: the log error shown when Aitum Stream Suite is installed, since it names a
+  third-party plugin the user installed. The Multistream settings warning no longer names Aitum.
 
 ## Not changed yet
 
