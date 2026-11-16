@@ -2,7 +2,7 @@
 
 This is a **modified version of [Aitum Vertical](https://github.com/Aitum/obs-vertical-canvas)** ("Vertical Canvas for OBS
 Studio") by Aitum and Exeldro, licensed under the **GNU General Public License v2.0** (see [LICENSE](LICENSE)). CTD OBS
-builds it in as the core module `vertical-canvas` and shows it to users as **Vertical**. All upstream copyright notices
+builds it in as the core module `vertical-canvas` and shows it to users as **Vertical** (docks: **CTD Vertical …**). All upstream copyright notices
 and the licence are kept; every CTD change is listed here so upstream merges stay manageable.
 
 Base: Aitum Vertical 1.6.7.
@@ -18,6 +18,8 @@ Base: Aitum Vertical 1.6.7.
 | 2026-11-09 | Settings | Removed the Help page (Aitum troubleshooter, guides, Discord), the Support Aitum page and the "View guide" links to Aitum's site. The footer reads "Version x.y.z - based on Aitum Vertical (GPL-2.0)" instead of "made with ♡ by Aitum" | `config-dialog.cpp`, `data/locale/*.ini` |
 | 2026-11-09 | Look | Removed hard-coded button and warning colours, so the CTD Night theme (or any OBS theme) styles the dock and its settings | `vertical-canvas.cpp`, `config-dialog.cpp` |
 | 2026-11-09 | Locale | Dropped strings for the removed UI from every locale | `data/locale/*.ini` |
+| 2026-11-16 | Name | The four docks show as **CTD Vertical**, **CTD Vertical Scenes**, **CTD Vertical Sources** and **CTD Vertical Transitions** (display titles only; new locale key `DockTitle`, English only, other locales fall back to it). Dock ids, config keys and the Backtrack output name are unchanged, so saved layouts still restore | `vertical-canvas.cpp`, `data/locale/en-US.ini` |
+| 2026-11-16 | Logs | Log prefixes `[Vertical Canvas]` and `[Vertical]` are now `[CTD] vertical:`; message text is unchanged. The canvas-rename line still names the old and new canvas (`'Aitum Vertical'` → `'Vertical'`) | `vertical-canvas.cpp`, `config-dialog.cpp` |
 
 ## Kept on purpose
 
