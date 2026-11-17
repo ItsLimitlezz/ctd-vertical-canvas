@@ -20,6 +20,7 @@ Base: Aitum Vertical 1.6.7.
 | 2026-11-09 | Locale | Dropped strings for the removed UI from every locale | `data/locale/*.ini` |
 | 2026-11-16 | Name | The four docks show as **CTD Vertical**, **CTD Vertical Scenes**, **CTD Vertical Sources** and **CTD Vertical Transitions** (display titles only; new locale key `DockTitle`, English only, other locales fall back to it). Dock ids, config keys and the Backtrack output name are unchanged, so saved layouts still restore | `vertical-canvas.cpp`, `data/locale/en-US.ini` |
 | 2026-11-16 | Logs | Log prefixes `[Vertical Canvas]` and `[Vertical]` are now `[CTD] vertical:`; message text is unchanged. The canvas-rename line still names the old and new canvas (`'Aitum Vertical'` → `'Vertical'`) | `vertical-canvas.cpp`, `config-dialog.cpp` |
+| 2026-11-17 | Send stream | `ctd_vertical_set_output` (CTD Relay dock "Send stream") also turns on "Start and stop streaming when main OBS starts and stops streaming", so the vertical stream starts and stops with the main one, as the dock's dialog says | `vertical-canvas.cpp` |
 
 ## Kept on purpose
 

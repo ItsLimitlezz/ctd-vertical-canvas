@@ -445,14 +445,19 @@ static void ctd_vertical_set_output(void *data, calldata_t *cd)
 				return;
 			}
 			success = dock->SetCtdStreamOutput(s, k, error);
+			/* CTD Relay's "Send stream" promises that the vertical stream goes with the main one: start and stop
+			 * it with OBS's main stream (Vertical Settings > Streaming > "Start and stop streaming when main OBS
+			 * starts and stops streaming"). */
+			if (success)
+				dock->streamingMatchMain = true;
 			if (success && !save_canvas())
 				error = "set, but config.json couldn't be saved, so it won't survive a restart";
 		});
 	}
 	if (success)
-		blog(LOG_INFO, "[CTD] vertical: CTD: stream output set");
+		blog(LOG_INFO, "[CTD] vertical: stream output set (starts with the main stream)");
 	else
-		blog(LOG_WARNING, "[CTD] vertical: CTD: stream output not set: %s", error.c_str());
+		blog(LOG_WARNING, "[CTD] vertical: stream output not set: %s", error.c_str());
 	calldata_set_bool(cd, "success", success);
 	calldata_set_string(cd, "error", error.c_str());
 }
