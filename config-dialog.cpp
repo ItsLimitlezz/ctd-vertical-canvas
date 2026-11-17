@@ -1162,7 +1162,7 @@ void OBSBasicSettings::SaveSettings()
 			obs_output_stop(canvasDock->replayOutput);
 		}
 
-		blog(LOG_INFO, "[Vertical Canvas] resolution changed from %dx%d to %dx%d", canvasDock->canvas_width,
+		blog(LOG_INFO, "[CTD] vertical: resolution changed from %dx%d to %dx%d", canvasDock->canvas_width,
 		     canvasDock->canvas_height, width, height);
 
 		canvasDock->canvas_width = width;

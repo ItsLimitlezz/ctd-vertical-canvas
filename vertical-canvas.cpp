@@ -123,7 +123,7 @@ static obs_data_t *ctd_load_config(const char *path)
 			continue;
 		obs_data_t *data = obs_data_create_from_json_file(file.c_str());
 		if (!data) {
-			blog(LOG_WARNING, "[Vertical Canvas] Couldn't read config.json%s", ext);
+			blog(LOG_WARNING, "[CTD] vertical: Couldn't read config.json%s", ext);
 			continue;
 		}
 		const long long seq = ctd_config_seq(data);
@@ -137,7 +137,7 @@ static obs_data_t *ctd_load_config(const char *path)
 		}
 	}
 	if (best && *best_ext)
-		blog(LOG_WARNING, "[Vertical Canvas] config.json%s is newer than config.json, loading it", best_ext);
+		blog(LOG_WARNING, "[CTD] vertical: config.json%s is newer than config.json, loading it", best_ext);
 	if (best_seq > ctd_last_save_seq)
 		ctd_last_save_seq = best_seq;
 	return best;
@@ -160,7 +160,7 @@ static bool ctd_save_config(obs_data_t *config, const char *path)
 	const std::string expected = json;
 	if (obs_data_save_json_safe(config, path, "tmp", "bak") && ctd_file_holds(path, expected))
 		return true;
-	blog(LOG_WARNING, "[Vertical Canvas] Safe save didn't update config.json, writing it directly");
+	blog(LOG_WARNING, "[CTD] vertical: Safe save didn't update config.json, writing it directly");
 	if (os_quick_write_utf8_file(path, expected.c_str(), expected.size(), false) && ctd_file_holds(path, expected)) {
 		const std::string tmp = std::string(path) + ".tmp";
 		if (os_file_exists(tmp.c_str()))
@@ -183,7 +183,7 @@ static bool save_canvas()
 	obs_data_t *config = ctd_load_config(path);
 	if (!config) {
 		config = obs_data_create();
-		blog(LOG_INFO, "[Vertical Canvas] New configuration file");
+		blog(LOG_INFO, "[CTD] vertical: New configuration file");
 	}
 	const long long seq = ++ctd_last_save_seq;
 	size_t outputs = 0;
@@ -201,9 +201,9 @@ static bool save_canvas()
 	obs_data_array_release(canvas);
 	const bool saved = ctd_save_config(config, path);
 	if (saved) {
-		blog(LOG_INFO, "[Vertical Canvas] Saved settings (save %lld, %zu stream outputs)", seq, outputs);
+		blog(LOG_INFO, "[CTD] vertical: Saved settings (save %lld, %zu stream outputs)", seq, outputs);
 	} else {
-		blog(LOG_ERROR, "[Vertical Canvas] Failed saving settings");
+		blog(LOG_ERROR, "[CTD] vertical: Failed saving settings");
 	}
 	obs_data_release(config);
 	bfree(path);
@@ -450,9 +450,9 @@ static void ctd_vertical_set_output(void *data, calldata_t *cd)
 		});
 	}
 	if (success)
-		blog(LOG_INFO, "[Vertical Canvas] CTD: stream output set");
+		blog(LOG_INFO, "[CTD] vertical: CTD: stream output set");
 	else
-		blog(LOG_WARNING, "[Vertical Canvas] CTD: stream output not set: %s", error.c_str());
+		blog(LOG_WARNING, "[CTD] vertical: CTD: stream output not set: %s", error.c_str());
 	calldata_set_bool(cd, "success", success);
 	calldata_set_string(cd, "error", error.c_str());
 }
@@ -779,11 +779,11 @@ bool obs_module_load(void)
 {
 	if (obs_get_module("aitum-stream-suite")) {
 		blog(LOG_ERROR,
-		     "[Vertical Canvas] Another vertical canvas plugin (Aitum Stream Suite) is installed; remove it to use the CTD OBS vertical canvas.");
+		     "[CTD] vertical: Another vertical canvas plugin (Aitum Stream Suite) is installed; remove it to use the CTD OBS vertical canvas.");
 		return false;
 	}
 
-	blog(LOG_INFO, "[Vertical Canvas] loaded version %s", PROJECT_VERSION);
+	blog(LOG_INFO, "[CTD] vertical: loaded version %s", PROJECT_VERSION);
 	obs_frontend_add_event_callback(frontend_event, nullptr);
 
 	obs_register_source(&audio_wrapper_source);
@@ -823,9 +823,9 @@ void obs_module_post_load(void)
 	bfree(path);
 	if (!config) {
 		config = obs_data_create();
-		blog(LOG_WARNING, "[Vertical Canvas] No configuration file loaded");
+		blog(LOG_WARNING, "[CTD] vertical: No configuration file loaded");
 	} else {
-		blog(LOG_INFO, "[Vertical Canvas] Loaded configuration file");
+		blog(LOG_INFO, "[CTD] vertical: Loaded configuration file");
 	}
 
 	const auto main_window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
@@ -833,21 +833,21 @@ void obs_module_post_load(void)
 	obs_data_release(config);
 	if (!canvas) {
 		canvas = obs_data_array_create();
-		blog(LOG_WARNING, "[Vertical Canvas] no canvas found in configuration");
+		blog(LOG_WARNING, "[CTD] vertical: no canvas found in configuration");
 	}
 	const auto count = obs_data_array_count(canvas);
 	if (!count) {
 		const auto canvasDock = new CanvasDock(nullptr, main_window);
-		const QString title = QString::fromUtf8(obs_module_text("Vertical"));
+		const QString title = QString::fromUtf8(obs_module_text("DockTitle"));
 		const auto name = "VerticalCanvasDock";
 		obs_frontend_add_dock_by_id(name, title.toUtf8().constData(), canvasDock);
 		canvas_docks.push_back(canvasDock);
-		blog(LOG_INFO, "[Vertical Canvas] New Canvas created");
+		blog(LOG_INFO, "[CTD] vertical: New Canvas created");
 	} else {
 		for (size_t i = 0; i < count; i++) {
 			const auto item = obs_data_array_item(canvas, i);
 			const auto canvasDock = new CanvasDock(item, main_window);
-			const QString title = QString::fromUtf8(obs_module_text("Vertical"));
+			const QString title = QString::fromUtf8(obs_module_text("DockTitle"));
 			const auto name = "VerticalCanvasDock";
 			obs_frontend_add_dock_by_id(name, title.toUtf8().constData(), canvasDock);
 			obs_data_release(item);
@@ -1287,6 +1287,8 @@ CanvasDock::CanvasDock(obs_data_t *settings, QWidget *parent)
 	setLayout(mainLayout);
 
 	const QString title = QString::fromUtf8(obs_module_text("Vertical"));
+	// Display title for the docks only; `title` still names the Backtrack output
+	const QString dockTitle = QString::fromUtf8(obs_module_text("DockTitle"));
 
 	const QString replayName = title + " " + QString::fromUtf8(obs_module_text("Backtrack"));
 	auto hotkeyData = obs_data_get_obj(settings, "backtrack_hotkeys");
@@ -1302,15 +1304,15 @@ CanvasDock::CanvasDock(obs_data_t *settings, QWidget *parent)
 	scenesDock->SetGridMode(obs_data_get_bool(settings, "grid_mode"));
 
 	const auto scenesName = "VerticalCanvasDockScenes";
-	const auto scenesTitle = title + " " + QString::fromUtf8(obs_frontend_get_locale_string("Basic.Main.Scenes"));
+	const auto scenesTitle = dockTitle + " " + QString::fromUtf8(obs_frontend_get_locale_string("Basic.Main.Scenes"));
 	obs_frontend_add_dock_by_id(scenesName, scenesTitle.toUtf8().constData(), scenesDock);
 	sourcesDock = new CanvasSourcesDock(this, parent);
 	const auto sourcesName = "VerticalCanvasDockSources";
-	const auto sourcesTitle = title + " " + QString::fromUtf8(obs_frontend_get_locale_string("Basic.Main.Sources"));
+	const auto sourcesTitle = dockTitle + " " + QString::fromUtf8(obs_frontend_get_locale_string("Basic.Main.Sources"));
 	obs_frontend_add_dock_by_id(sourcesName, sourcesTitle.toUtf8().constData(), sourcesDock);
 	transitionsDock = new CanvasTransitionsDock(this, parent);
 	const auto transitionsName = "VerticalCanvasDockTransitions";
-	const auto transitionsTitle = title + " " + QString::fromUtf8(obs_frontend_get_locale_string("Basic.SceneTransitions"));
+	const auto transitionsTitle = dockTitle + " " + QString::fromUtf8(obs_frontend_get_locale_string("Basic.SceneTransitions"));
 	obs_frontend_add_dock_by_id(transitionsName, transitionsTitle.toUtf8().constData(), transitionsDock);
 	preview->setObjectName(QStringLiteral("preview"));
 	preview->setMinimumSize(QSize(24, 24));
@@ -5330,7 +5332,7 @@ bool CanvasDock::StartVideo()
 	}
 	if (c && strcmp(obs_canvas_get_name(c), LEGACY_CANVAS_NAME) == 0) {
 		// Scene collections saved before the rename keep the upstream name; the saved scenes stay on the same canvas
-		blog(LOG_INFO, "[Vertical] Renaming canvas '%s' to '%s'", LEGACY_CANVAS_NAME, CANVAS_NAME);
+		blog(LOG_INFO, "[CTD] vertical: Renaming canvas '%s' to '%s'", LEGACY_CANVAS_NAME, CANVAS_NAME);
 		obs_canvas_set_name(c, CANVAS_NAME);
 	}
 	canvas = c ? c : obs_frontend_add_canvas(CANVAS_NAME, nullptr, PROGRAM);
@@ -6014,7 +6016,7 @@ void CanvasDock::ShowNoReplayOutputError()
 	if (astrcmpi(mode, "Advanced") == 0) {
 		const char *recType = config_get_string(config, "AdvOut", "RecType");
 		if (astrcmpi(recType, "FFmpeg") == 0) {
-			blog(LOG_WARNING, "[Vertical Canvas] error starting backtrack: custom ffmpeg");
+			blog(LOG_WARNING, "[CTD] vertical: error starting backtrack: custom ffmpeg");
 			if (isVisible()) {
 				QMessageBox::warning(this, QString::fromUtf8(obs_module_text("backtrackStartFail")),
 						     QString::fromUtf8(obs_module_text("backtrackCustomFfmpeg")));
@@ -6022,7 +6024,7 @@ void CanvasDock::ShowNoReplayOutputError()
 			return;
 		}
 	}
-	blog(LOG_WARNING, "[Vertical Canvas] error starting backtrack: no replay buffer found");
+	blog(LOG_WARNING, "[CTD] vertical: error starting backtrack: no replay buffer found");
 	if (isVisible()) {
 		QMessageBox::warning(this, QString::fromUtf8(obs_module_text("backtrackStartFail")),
 				     QString::fromUtf8(obs_module_text("backtrackNoReplayBuffer")));
@@ -6081,7 +6083,7 @@ void CanvasDock::StartReplayBuffer()
 		}
 		if (!enc) {
 			obs_output_release(replay_output);
-			blog(LOG_WARNING, "[Vertical Canvas] error starting backtrack: no video encoder found");
+			blog(LOG_WARNING, "[CTD] vertical: error starting backtrack: no video encoder found");
 			return;
 		}
 
@@ -6611,7 +6613,7 @@ void CanvasDock::StartStreamOutput(std::vector<StreamServer>::iterator it)
 	CreateStreamOutput(it);
 	const bool started_video = StartVideo();
 	if (it->settings && obs_data_get_bool(it->settings, "advanced") && obs_get_module("aitum-multistream")) {
-		blog(LOG_INFO, "[Vertical Canvas] Start output '%s' with multistream advanced settings", it->name.c_str());
+		blog(LOG_INFO, "[CTD] vertical: Start output '%s' with multistream advanced settings", it->name.c_str());
 		auto venc_name = obs_data_get_string(it->settings, "video_encoder");
 		if (!venc_name || venc_name[0] == '\0') {
 			//use main encoder
@@ -6707,7 +6709,7 @@ void CanvasDock::StartStreamOutput(std::vector<StreamServer>::iterator it)
 			obs_output_set_audio_encoder(it->output, aenc, 0);
 		}
 	} else {
-		blog(LOG_INFO, "[Vertical Canvas] Start output '%s'", it->name.c_str());
+		blog(LOG_INFO, "[CTD] vertical: Start output '%s'", it->name.c_str());
 		auto old_enc = obs_output_get_video_encoder(it->output);
 		auto new_enc = GetStreamVideoEncoder();
 		if (old_enc != new_enc) {
@@ -6926,7 +6928,7 @@ void CanvasDock::StartStream()
 		}
 	}
 	if (!to_start) {
-		blog(LOG_WARNING, "[Vertical Canvas] No stream output to start");
+		blog(LOG_WARNING, "[CTD] vertical: No stream output to start");
 		QMetaObject::invokeMethod(this, "OnStreamStop", Q_ARG(int, OBS_OUTPUT_SUCCESS),
 					  Q_ARG(QString, QString::fromUtf8("")), Q_ARG(QString, QString::fromUtf8("")),
 					  Q_ARG(QString, QString::fromUtf8("")));
@@ -6956,7 +6958,7 @@ void CanvasDock::StartStream()
 
 		CreateStreamOutput(it);
 		if (it->settings && obs_data_get_bool(it->settings, "advanced") && obs_get_module("aitum-multistream")) {
-			blog(LOG_INFO, "[Vertical Canvas] Start output '%s' with multistream advanced settings", it->name.c_str());
+			blog(LOG_INFO, "[CTD] vertical: Start output '%s' with multistream advanced settings", it->name.c_str());
 			auto venc_name = obs_data_get_string(it->settings, "video_encoder");
 			if (!venc_name || venc_name[0] == '\0') {
 				//use main encoder
@@ -7058,7 +7060,7 @@ void CanvasDock::StartStream()
 				obs_encoder_release(old_enc);
 			}
 		} else {
-			blog(LOG_INFO, "[Vertical Canvas] Start output '%s'", it->name.c_str());
+			blog(LOG_INFO, "[CTD] vertical: Start output '%s'", it->name.c_str());
 			if (!video_encoder) {
 				video_encoder = GetStreamVideoEncoder();
 			} else {
@@ -8065,9 +8067,9 @@ void CanvasDock::HandleRecordError(int code, QString last_error)
 {
 	if (code != OBS_OUTPUT_SUCCESS) {
 		if (!last_error.isEmpty()) {
-			blog(LOG_WARNING, "[Vertical Canvas] record stop error %s", last_error.toUtf8().constData());
+			blog(LOG_WARNING, "[CTD] vertical: record stop error %s", last_error.toUtf8().constData());
 		} else {
-			blog(LOG_WARNING, "[Vertical Canvas] record stop error %i", code);
+			blog(LOG_WARNING, "[CTD] vertical: record stop error %i", code);
 		}
 	}
 	if (code == OBS_OUTPUT_UNSUPPORTED && isVisible()) {
@@ -8193,9 +8195,9 @@ void CanvasDock::OnStreamStop(int code, QString last_error, QString stream_serve
 	}
 	if (code != OBS_OUTPUT_SUCCESS) {
 		if (use_last_error && !last_error.isEmpty()) {
-			blog(LOG_WARNING, "[Vertical Canvas] stream stop error %s", last_error.toUtf8().constData());
+			blog(LOG_WARNING, "[CTD] vertical: stream stop error %s", last_error.toUtf8().constData());
 		} else {
-			blog(LOG_WARNING, "[Vertical Canvas] stream stop error %i", code);
+			blog(LOG_WARNING, "[CTD] vertical: stream stop error %i", code);
 		}
 	}
 	if (encode_error) {
@@ -9249,7 +9251,7 @@ void CanvasDock::save_load(obs_data_t *save_data, bool saving, void *param)
 void CanvasDock::LogScenes()
 {
 	blog(LOG_INFO, "------------------------------------------------");
-	blog(LOG_INFO, "[Vertical] Canvas '%s' scenes:", obs_canvas_get_name(canvas));
+	blog(LOG_INFO, "[CTD] vertical: Canvas '%s' scenes:", obs_canvas_get_name(canvas));
 	if (scenesDock && scenesDock->sceneList) {
 		for (int j = 0; j < scenesDock->sceneList->count(); j++) {
 			auto item = scenesDock->sceneList->item(j);
