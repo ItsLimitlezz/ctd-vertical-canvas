@@ -444,12 +444,7 @@ static void ctd_vertical_set_output(void *data, calldata_t *cd)
 				error = "no vertical canvas";
 				return;
 			}
-			success = dock->SetCtdStreamOutput(s, k, error);
-			/* CTD Relay's "Send stream" promises that the vertical stream goes with the main one: start and stop
-			 * it with OBS's main stream (Vertical Settings > Streaming > "Start and stop streaming when main OBS
-			 * starts and stops streaming"). */
-			if (success)
-				dock->streamingMatchMain = true;
+			success = dock->SetCtdStreamOutput(s, k, error); /* also turns on "start with the main stream" */
 			if (success && !save_canvas())
 				error = "set, but config.json couldn't be saved, so it won't survive a restart";
 		});
@@ -9156,6 +9151,8 @@ bool CanvasDock::SetCtdStreamOutput(const std::string &server, const std::string
 		obs_data_set_bool(target->settings, "enabled", true);
 	}
 	UpdateMulti();
+	/* CTD Relay's "Send stream" promises the vertical stream goes with the main one: start/stop it with OBS's main stream */
+	streamingMatchMain = true;
 	return true;
 }
 
