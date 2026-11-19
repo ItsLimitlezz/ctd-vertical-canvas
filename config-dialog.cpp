@@ -1269,16 +1269,10 @@ void OBSBasicSettings::SaveSettings()
 				if (obs_output_active(canvasDock->streamOutputs[idx].output)) {
 					obs_output_stop(canvasDock->streamOutputs[idx].output);
 				}
-				auto old_enc = obs_output_get_video_encoder(canvasDock->streamOutputs[idx].output);
-				for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
-					auto old_audio_enc = obs_output_get_audio_encoder(canvasDock->streamOutputs[idx].output, i);
-					if (old_audio_enc) {
-						obs_encoder_release(old_audio_enc);
-					}
-				}
+				/* CTD: releasing an output releases the encoders on it (see "encoder ownership" in
+				 * vertical-canvas.cpp); the same goes for the obs_output_set_*_encoder(.., nullptr) calls below */
 				obs_output_release(canvasDock->streamOutputs[idx].output);
 				obs_service_release(canvasDock->streamOutputs[idx].service);
-				obs_encoder_release(old_enc);
 				canvasDock->streamOutputs.pop_back();
 			}
 		}
@@ -1307,9 +1301,7 @@ void OBSBasicSettings::SaveSettings()
 		canvasDock->stream_encoder = se.constData();
 		for (auto it = canvasDock->streamOutputs.begin(); it != canvasDock->streamOutputs.end(); ++it) {
 			if (it->output && !obs_output_active(it->output)) {
-				auto old_enc = obs_output_get_video_encoder(it->output);
 				obs_output_set_video_encoder(it->output, nullptr);
-				obs_encoder_release(old_enc);
 			}
 		}
 	}
@@ -1319,11 +1311,7 @@ void OBSBasicSettings::SaveSettings()
 			if (canvasDock->stream_audio_track != i) {
 				for (auto it = canvasDock->streamOutputs.begin(); it != canvasDock->streamOutputs.end(); ++it) {
 					if (it->output && !obs_output_active(it->output)) {
-						auto old_enc = obs_output_get_audio_encoder(it->output, 0);
-						if (old_enc) {
-							obs_output_set_audio_encoder(it->output, nullptr, 0);
-							obs_encoder_release(old_enc);
-						}
+						obs_output_set_audio_encoder(it->output, nullptr, 0);
 					}
 				}
 				canvasDock->stream_audio_track = i;
@@ -1347,14 +1335,10 @@ void OBSBasicSettings::SaveSettings()
 		if ((canvasDock->recordOutput && !obs_output_active(canvasDock->recordOutput)) ||
 		    (canvasDock->replayOutput && !obs_output_active(canvasDock->replayOutput))) {
 			if (canvasDock->recordOutput) {
-				auto old_enc = obs_output_get_video_encoder(canvasDock->recordOutput);
 				obs_output_set_video_encoder(canvasDock->recordOutput, nullptr);
-				obs_encoder_release(old_enc);
 			}
 			if (canvasDock->replayOutput) {
-				auto old_enc = obs_output_get_video_encoder(canvasDock->replayOutput);
 				obs_output_set_video_encoder(canvasDock->replayOutput, nullptr);
-				obs_encoder_release(old_enc);
 			}
 		}
 	}
@@ -1376,18 +1360,10 @@ void OBSBasicSettings::SaveSettings()
 		    (canvasDock->replayOutput && !obs_output_active(canvasDock->replayOutput))) {
 			for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
 				if (canvasDock->recordOutput) {
-					auto old_enc = obs_output_get_audio_encoder(canvasDock->recordOutput, i);
-					if (old_enc) {
-						obs_output_set_audio_encoder(canvasDock->recordOutput, nullptr, i);
-						obs_encoder_release(old_enc);
-					}
+					obs_output_set_audio_encoder(canvasDock->recordOutput, nullptr, i);
 				}
 				if (canvasDock->replayOutput) {
-					auto old_enc = obs_output_get_audio_encoder(canvasDock->replayOutput, i);
-					if (old_enc) {
-						obs_output_set_audio_encoder(canvasDock->replayOutput, nullptr, i);
-						obs_encoder_release(old_enc);
-					}
+					obs_output_set_audio_encoder(canvasDock->replayOutput, nullptr, i);
 				}
 			}
 		}
