@@ -4,6 +4,7 @@
 #include <QScreen>
 #include <QResizeEvent>
 #include <QShowEvent>
+#include <QPointer>
 
 #include <obs-config.h>
 
@@ -40,9 +41,22 @@ protected:
 			surfaceEvent = static_cast<QPlatformSurfaceEvent *>(event);
 
 			switch (surfaceEvent->surfaceEventType()) {
-			case QPlatformSurfaceEvent::SurfaceCreated:
-				display->RestoreDisplay();
+			case QPlatformSurfaceEvent::SurfaceCreated: {
+				/* CTD: a new native surface (the dock was floated or docked again). Re-create the
+				 * display once the event is done, never from inside it: the old view may still be
+				 * going away, and libobs must not render to it (OBS fixed the same macOS crash in
+				 * render_display by not re-creating displays, fd502cb). */
+				QPointer<OBSQTDisplay> target(display);
+				QMetaObject::invokeMethod(
+					display,
+					[target]() {
+						if (target) {
+							target->RestoreDisplay();
+						}
+					},
+					Qt::QueuedConnection);
 				break;
+			}
 			case QPlatformSurfaceEvent::SurfaceAboutToBeDestroyed:
 				display->DestroyDisplay();
 				break;
@@ -51,9 +65,9 @@ protected:
 			}
 
 			break;
-		case QEvent::Expose:
-			display->RestoreDisplay();
-			break;
+		/* CTD: no re-create on QEvent::Expose (minimize, restore, fullscreen, Space changes): Expose
+		 * never clears `destroying` any more, so a display torn down with its surface stays down until
+		 * the surface is really created again. paintEvent / resizeEvent still create a missing one. */
 		default:
 			break;
 		}
@@ -108,8 +122,9 @@ OBSQTDisplay::OBSQTDisplay(QWidget *parent, Qt::WindowFlags flags) : QWidget(par
 		obs_display_resize(display, size.width(), size.height());
 	};
 
-	connect(windowHandle(), &QWindow::visibleChanged, windowVisible);
-	connect(windowHandle(), &QWindow::screenChanged, screenChanged);
+	/* CTD: with this widget as context (as OBS 33 does), so the lambdas never run after it is gone */
+	connect(windowHandle(), &QWindow::visibleChanged, this, windowVisible);
+	connect(windowHandle(), &QWindow::screenChanged, this, screenChanged);
 
 	windowHandle()->installEventFilter(new SurfaceEventFilter(this));
 }
@@ -176,7 +191,8 @@ void OBSQTDisplay::CreateDisplay()
 	if (destroying)
 		return;
 
-	if (!windowHandle()->isExposed())
+	/* CTD: no native window (being destroyed or not created yet) means nothing to render to */
+	if (!windowHandle() || !windowHandle()->isExposed())
 		return;
 
 	QSize size = GetPixelSize(this);

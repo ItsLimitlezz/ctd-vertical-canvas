@@ -359,6 +359,9 @@ private:
 	static void stream_output_start(void *p, calldata_t *calldata);
 	static void stream_output_stop(void *p, calldata_t *calldata);
 	static void source_rename(void *p, calldata_t *calldata);
+	/* UI thread: a scene was renamed (queued by source_rename) */
+	void SceneRenamed(const QString &prev_name, const QString &new_name);
+	void DisconnectSceneRenames();
 	static void source_remove(void *p, calldata_t *calldata);
 	static void source_save(void *p, calldata_t *calldata);
 	static bool start_virtual_cam_hotkey(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey, bool pressed);

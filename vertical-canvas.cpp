@@ -1,6 +1,9 @@
 #include "vertical-canvas.hpp"
 
+#include <chrono>
+#include <future>
 #include <list>
+#include <memory>
 
 #include "version.h"
 
@@ -579,20 +582,67 @@ void vendor_request_switch_scene(obs_data_t *request_data, obs_data_t *response_
 	obs_data_set_bool(response_data, "success", true);
 }
 
+/* CTD: obs-websocket runs vendor requests on its own threads, but the docks' scene lists and current scene belong to
+ * the UI thread (it adds, takes and clears them). This reads them there and waits at most 2 s, so a request that comes
+ * while the UI thread is busy quitting (waiting on obs-websocket's threads) fails instead of deadlocking. */
+struct CtdSceneInfo {
+	bool found = false;
+	std::string current;
+	std::vector<std::string> scenes;
+};
+
+static bool ctd_read_scenes(long long width, long long height, bool all, CtdSceneInfo &out)
+{
+	auto info = std::make_shared<CtdSceneInfo>();
+	auto read = [info, width, height, all]() {
+		for (const auto &it : canvas_docks) {
+			if ((width && it->GetCanvasWidth() != width) || (height && it->GetCanvasHeight() != height)) {
+				continue;
+			}
+			if (!info->found) {
+				obs_source_t *scene = obs_scene_get_source(it->GetCurrentScene());
+				info->current = scene ? obs_source_get_name(scene) : "";
+			}
+			info->found = true;
+			for (const auto &name : it->GetScenes()) {
+				info->scenes.push_back(name.toUtf8().toStdString());
+			}
+			if (!all) {
+				break;
+			}
+		}
+	};
+	QObject *app = QCoreApplication::instance();
+	if (!app) {
+		return false;
+	}
+	if (QThread::currentThread() == app->thread()) {
+		read();
+	} else {
+		auto done = std::make_shared<std::promise<void>>();
+		std::future<void> ready = done->get_future();
+		QMetaObject::invokeMethod(
+			app,
+			[read, done]() {
+				read();
+				done->set_value();
+			},
+			Qt::QueuedConnection);
+		if (ready.wait_for(std::chrono::seconds(2)) != std::future_status::ready) {
+			return false; /* the task still runs later, on its own copy */
+		}
+	}
+	out = *info;
+	return true;
+}
+
 void vendor_request_current_scene(obs_data_t *request_data, obs_data_t *response_data, void *)
 {
 	const auto width = obs_data_get_int(request_data, "width");
 	const auto height = obs_data_get_int(request_data, "height");
-	for (const auto &it : canvas_docks) {
-		if ((width && it->GetCanvasWidth() != width) || (height && it->GetCanvasHeight() != height)) {
-			continue;
-		}
-		auto scene = obs_scene_get_source(it->GetCurrentScene());
-		if (scene) {
-			obs_data_set_string(response_data, "scene", obs_source_get_name(scene));
-		} else {
-			obs_data_set_string(response_data, "scene", "");
-		}
+	CtdSceneInfo info;
+	if (ctd_read_scenes(width, height, false, info) && info.found) {
+		obs_data_set_string(response_data, "scene", info.current.c_str());
 		obs_data_set_bool(response_data, "success", true);
 		return;
 	}
@@ -603,22 +653,18 @@ void vendor_request_get_scenes(obs_data_t *request_data, obs_data_t *response_da
 {
 	const auto width = obs_data_get_int(request_data, "width");
 	const auto height = obs_data_get_int(request_data, "height");
+	CtdSceneInfo info;
+	const bool read = ctd_read_scenes(width, height, true, info);
 	auto sa = obs_data_array_create();
-	for (const auto &it : canvas_docks) {
-		if ((width && it->GetCanvasWidth() != width) || (height && it->GetCanvasHeight() != height)) {
-			continue;
-		}
-		auto scenes = it->GetScenes();
-		for (auto &scene : scenes) {
-			auto s = obs_data_create();
-			obs_data_set_string(s, "name", scene.toUtf8().constData());
-			obs_data_array_push_back(sa, s);
-			obs_data_release(s);
-		}
+	for (const auto &scene : info.scenes) {
+		auto s = obs_data_create();
+		obs_data_set_string(s, "name", scene.c_str());
+		obs_data_array_push_back(sa, s);
+		obs_data_release(s);
 	}
 	obs_data_set_array(response_data, "scenes", sa);
 	obs_data_array_release(sa);
-	obs_data_set_bool(response_data, "success", true);
+	obs_data_set_bool(response_data, "success", read);
 }
 
 void vendor_request_status(obs_data_t *request_data, obs_data_t *response_data, void *)
@@ -770,6 +816,7 @@ void vendor_request_pause_recording(obs_data_t *request_data, obs_data_t *respon
 
 		auto output = it->GetRecordOutput();
 		if (!output || !obs_output_active(output) || obs_output_paused(output)) {
+			obs_output_release(output); /* CTD: GetRecordOutput gives a reference */
 			continue;
 		}
 		obs_output_pause(output, true);
@@ -791,6 +838,7 @@ void vendor_request_unpause_recording(obs_data_t *request_data, obs_data_t *resp
 
 		auto output = it->GetRecordOutput();
 		if (!output || !obs_output_active(output) || !obs_output_paused(output)) {
+			obs_output_release(output); /* CTD: GetRecordOutput gives a reference */
 			continue;
 		}
 		obs_output_pause(output, false);
@@ -1008,6 +1056,8 @@ void CanvasDock::AddScene(QString duplicate, bool ask_name)
 				},
 				this);
 		}
+		/* a vertical scene's renames come only on its own signal (libobs sends the global "source_rename" for the main
+		 * canvas only); disconnected in DisconnectSceneRenames */
 		auto sh = obs_source_get_signal_handler(new_scene);
 		signal_handler_connect(sh, "rename", source_rename, this);
 		auto sn = QString::fromUtf8(obs_source_get_name(new_scene));
@@ -1803,6 +1853,7 @@ CanvasDock::~CanvasDock()
 	sourcesDock = nullptr;
 	scenesDock = nullptr;
 	transitionsDock = nullptr;
+	DisconnectSceneRenames();
 	auto sh = obs_get_signal_handler();
 	signal_handler_disconnect(sh, "source_rename", source_rename, this);
 	signal_handler_disconnect(sh, "source_remove", source_remove, this);
@@ -3601,8 +3652,12 @@ void CanvasDock::AddSceneItemMenuItems(QMenu *popup, OBSSceneItem sceneItem)
 	a->setChecked(blendingMethod == OBS_BLEND_METHOD_SRGB_OFF);
 
 	popup->addSeparator();
-	popup->addMenu(CreateVisibilityTransitionMenu(true, sceneItem));
-	popup->addMenu(CreateVisibilityTransitionMenu(false, sceneItem));
+	/* CTD: these menus are new each time (and had no parent): they go with the popup */
+	for (const bool visible : {true, false}) {
+		QMenu *transitionMenu = CreateVisibilityTransitionMenu(visible, sceneItem);
+		transitionMenu->setParent(popup, transitionMenu->windowFlags());
+		popup->addMenu(transitionMenu);
+	}
 
 	popup->addSeparator();
 
@@ -3661,7 +3716,9 @@ bool CanvasDock::HandleMouseReleaseEvent(QMouseEvent *event)
 					obs_source_release(s);
 				});
 
-		popup.addMenu(CreateAddSourcePopupMenu());
+		QMenu *add = CreateAddSourcePopupMenu(); /* CTD: new each time: it goes with the popup */
+		add->setParent(&popup, add->windowFlags());
+		popup.addMenu(add);
 
 		popup.addSeparator();
 
@@ -5364,7 +5421,7 @@ void CanvasDock::virtual_cam_output_start(void *data, calldata_t *calldata)
 	UNUSED_PARAMETER(calldata);
 	auto d = static_cast<CanvasDock *>(data);
 	d->SendVendorEvent("virtual_camera_started");
-	d->CheckReplayBuffer(true);
+	/* CTD: Backtrack starts in OnVirtualCamStart, on the UI thread (this is the output's own thread) */
 	QMetaObject::invokeMethod(d, "OnVirtualCamStart");
 }
 
@@ -5385,6 +5442,7 @@ void CanvasDock::OnVirtualCamStart()
 {
 	virtualCamButton->setIcon(virtualCamActiveIcon);
 	virtualCamButton->setChecked(true);
+	CheckReplayBuffer(true);
 }
 
 void CanvasDock::OnVirtualCamStop()
@@ -5839,7 +5897,7 @@ void CanvasDock::record_output_start(void *data, calldata_t *calldata)
 	UNUSED_PARAMETER(calldata);
 	auto d = static_cast<CanvasDock *>(data);
 	d->SendVendorEvent("recording_started");
-	d->CheckReplayBuffer(true);
+	/* CTD: Backtrack starts in OnRecordStart, on the UI thread (this is the output's own thread) */
 	QMetaObject::invokeMethod(d, "OnRecordStart");
 }
 
@@ -5861,7 +5919,8 @@ void CanvasDock::record_output_stopping(void *data, calldata_t *calldata)
 {
 	UNUSED_PARAMETER(calldata);
 	auto d = static_cast<CanvasDock *>(data);
-	d->CheckReplayBuffer();
+	/* CTD: on the UI thread, which owns the dock's widgets and outputs; a dock deleted meanwhile drops the call */
+	QMetaObject::invokeMethod(d, [d]() { d->CheckReplayBuffer(); }, Qt::QueuedConnection);
 }
 
 void CanvasDock::replay_saved(void *data, calldata_t *calldata)
@@ -7027,7 +7086,8 @@ void CanvasDock::stream_output_start(void *data, calldata_t *calldata)
 	UNUSED_PARAMETER(calldata);
 	auto d = static_cast<CanvasDock *>(data);
 	d->SendVendorEvent("streaming_started");
-	d->CheckReplayBuffer(true);
+	/* CTD: Backtrack starts in OnStreamStart, on the UI thread. This runs on the output's connect thread, and
+	 * CheckReplayBuffer can create encoders and outputs, start and stop OBS's own outputs, and show a message box. */
 	QMetaObject::invokeMethod(d, "OnStreamStart");
 }
 
@@ -7273,6 +7333,7 @@ void CanvasDock::ClearScenes()
 		scenesDock->sceneList->clear();
 	}
 	SwitchScene("", false);
+	DisconnectSceneRenames();
 	if (canvas) {
 		obs_canvas_set_channel(canvas, 0, nullptr);
 		obs_canvas_release(canvas);
@@ -7362,6 +7423,7 @@ void CanvasDock::LoadScenes()
 					},
 					t);
 			}
+			/* disconnected in DisconnectSceneRenames */
 			auto sh = obs_source_get_signal_handler(src);
 			signal_handler_connect(sh, "rename", source_rename, t);
 			QString name = QString::fromUtf8(obs_source_get_name(src));
@@ -7400,8 +7462,6 @@ void CanvasDock::LoadScenes()
 		if (obs_data_get_bool(settings, "custom_size") && obs_data_get_int(settings, "cx") == canvas_width &&
 		    obs_data_get_int(settings, "cy") == canvas_height) {
 			obs_data_set_bool(settings, "custom_size", false);
-			auto sh = obs_source_get_signal_handler(src);
-			signal_handler_connect(sh, "rename", source_rename, this);
 			std::list<obs_sceneitem_t *> group_items;
 			obs_scene_enum_items(
 				obs_scene_from_source(src),
@@ -7668,15 +7728,44 @@ bool CanvasDock::SwapTransition(obs_source_t *newTransition)
 	return true;
 }
 
-void CanvasDock::source_rename(void *data, calldata_t *calldata)
+/* CTD: the per-scene "rename" handlers hold this dock; drop them before the dock or its canvas goes away */
+void CanvasDock::DisconnectSceneRenames()
 {
-	const auto d = static_cast<CanvasDock *>(data);
-	const auto prev_name = QString::fromUtf8(calldata_string(calldata, "prev_name"));
-	const auto new_name = QString::fromUtf8(calldata_string(calldata, "new_name"));
-	auto source = (obs_source_t *)calldata_ptr(calldata, "source");
-	if (!source || !obs_source_is_scene(source)) {
+	if (!canvas) {
 		return;
 	}
+	obs_canvas_enum_scenes(
+		canvas,
+		[](void *param, obs_source_t *src) {
+			signal_handler_disconnect(obs_source_get_signal_handler(src), "rename", source_rename, param);
+			return true;
+		},
+		this);
+}
+
+void CanvasDock::source_rename(void *data, calldata_t *calldata)
+{
+	/* The signal comes on whichever thread renamed the source (obs-websocket's, a script's): copy the names and do
+	 * the work on the UI thread, which owns the docks' widgets. A dock deleted meanwhile drops the queued call. */
+	const auto d = static_cast<CanvasDock *>(data);
+	auto source = (obs_source_t *)calldata_ptr(calldata, "source");
+	if (!d || !source || !obs_source_is_scene(source)) {
+		return;
+	}
+	const char *prev = calldata_string(calldata, "prev_name");
+	const char *next = calldata_string(calldata, "new_name");
+	if (!prev || !next) {
+		return;
+	}
+	const auto prev_name = QString::fromUtf8(prev);
+	const auto new_name = QString::fromUtf8(next);
+	QMetaObject::invokeMethod(d, [d, prev_name, new_name]() { d->SceneRenamed(prev_name, new_name); }, Qt::QueuedConnection);
+}
+
+void CanvasDock::SceneRenamed(const QString &prev_name, const QString &new_name)
+{
+	const auto d = this;
+	const QByteArray new_name_utf8 = new_name.toUtf8();
 
 	struct obs_frontend_source_list scenes = {};
 	obs_frontend_get_scenes(&scenes);
@@ -7693,7 +7782,7 @@ void CanvasDock::source_rename(void *data, calldata_t *calldata)
 			auto item = obs_data_array_item(c, j);
 			auto n = QString::fromUtf8(obs_data_get_string(item, "scene"));
 			if (n == prev_name) {
-				obs_data_set_string(item, "scene", calldata_string(calldata, "new_name"));
+				obs_data_set_string(item, "scene", new_name_utf8.constData());
 			}
 			obs_data_release(item);
 		}
@@ -7759,7 +7848,9 @@ void CanvasDock::SceneRemoved(const QString name)
 			if (item->text() != name) {
 				continue;
 			}
-			scenesDock->sceneList->takeItem(i);
+			/* CTD: takeItem hands the item over (it was leaked), and the next row moves up into i */
+			delete scenesDock->sceneList->takeItem(i);
+			i--;
 		}
 		auto r = scenesDock->sceneList->currentRow();
 		auto c = scenesDock->sceneList->count();
