@@ -76,6 +76,7 @@ CanvasSourcesDock::CanvasSourcesDock(CanvasDock *canvas_dock, QWidget *parent) :
 				    QString::fromUtf8(obs_frontend_get_locale_string("AddSource")), [this] {
 					    const auto menu = canvasDock->CreateAddSourcePopupMenu();
 					    menu->exec(QCursor::pos());
+					    menu->deleteLater(); /* CTD: a new menu each time; it was never freed */
 				    });
 	toolbar->widgetForAction(a)->setProperty("themeID", QVariant(QString::fromUtf8("addIconSmall")));
 	toolbar->widgetForAction(a)->setProperty("class", "icon-plus");
@@ -204,7 +205,10 @@ CanvasSourcesDock::~CanvasSourcesDock() {}
 void CanvasSourcesDock::ShowSourcesContextMenu(obs_sceneitem_t *item)
 {
 	auto menu = QMenu(this);
-	menu.addMenu(canvasDock->CreateAddSourcePopupMenu());
+	/* CTD: the Add submenu is new each time: it goes with this menu */
+	QMenu *add = canvasDock->CreateAddSourcePopupMenu();
+	add->setParent(&menu, add->windowFlags());
+	menu.addMenu(add);
 	canvasDock->AddCopyPasteMenuItems(&menu, item);
 	if (item) {
 		canvasDock->AddSceneItemMenuItems(&menu, item);

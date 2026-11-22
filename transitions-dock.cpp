@@ -93,8 +93,7 @@ CanvasTransitionsDock::CanvasTransitionsDock(CanvasDock *canvas_dock, QWidget *p
 					while (true) {
 						if (!NameDialog::AskForName(
 							    this, QString::fromUtf8(obs_module_text("TransitionName")), name)) {
-							obs_source_release(t);
-							return;
+							return; /* CTD: t is an OBSSourceAutoRelease: releasing it here as well freed it twice */
 						}
 						if (name.empty())
 							continue;
