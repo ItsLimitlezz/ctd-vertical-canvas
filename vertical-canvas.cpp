@@ -1008,6 +1008,8 @@ void CanvasDock::AddScene(QString duplicate, bool ask_name)
 				},
 				this);
 		}
+		/* a vertical scene's renames come only on its own signal (libobs sends the global "source_rename" for the main
+		 * canvas only); disconnected in DisconnectSceneRenames */
 		auto sh = obs_source_get_signal_handler(new_scene);
 		signal_handler_connect(sh, "rename", source_rename, this);
 		auto sn = QString::fromUtf8(obs_source_get_name(new_scene));
@@ -1803,6 +1805,7 @@ CanvasDock::~CanvasDock()
 	sourcesDock = nullptr;
 	scenesDock = nullptr;
 	transitionsDock = nullptr;
+	DisconnectSceneRenames();
 	auto sh = obs_get_signal_handler();
 	signal_handler_disconnect(sh, "source_rename", source_rename, this);
 	signal_handler_disconnect(sh, "source_remove", source_remove, this);
@@ -7273,6 +7276,7 @@ void CanvasDock::ClearScenes()
 		scenesDock->sceneList->clear();
 	}
 	SwitchScene("", false);
+	DisconnectSceneRenames();
 	if (canvas) {
 		obs_canvas_set_channel(canvas, 0, nullptr);
 		obs_canvas_release(canvas);
@@ -7362,6 +7366,7 @@ void CanvasDock::LoadScenes()
 					},
 					t);
 			}
+			/* disconnected in DisconnectSceneRenames */
 			auto sh = obs_source_get_signal_handler(src);
 			signal_handler_connect(sh, "rename", source_rename, t);
 			QString name = QString::fromUtf8(obs_source_get_name(src));
@@ -7400,8 +7405,6 @@ void CanvasDock::LoadScenes()
 		if (obs_data_get_bool(settings, "custom_size") && obs_data_get_int(settings, "cx") == canvas_width &&
 		    obs_data_get_int(settings, "cy") == canvas_height) {
 			obs_data_set_bool(settings, "custom_size", false);
-			auto sh = obs_source_get_signal_handler(src);
-			signal_handler_connect(sh, "rename", source_rename, this);
 			std::list<obs_sceneitem_t *> group_items;
 			obs_scene_enum_items(
 				obs_scene_from_source(src),
@@ -7668,15 +7671,44 @@ bool CanvasDock::SwapTransition(obs_source_t *newTransition)
 	return true;
 }
 
-void CanvasDock::source_rename(void *data, calldata_t *calldata)
+/* CTD: the per-scene "rename" handlers hold this dock; drop them before the dock or its canvas goes away */
+void CanvasDock::DisconnectSceneRenames()
 {
-	const auto d = static_cast<CanvasDock *>(data);
-	const auto prev_name = QString::fromUtf8(calldata_string(calldata, "prev_name"));
-	const auto new_name = QString::fromUtf8(calldata_string(calldata, "new_name"));
-	auto source = (obs_source_t *)calldata_ptr(calldata, "source");
-	if (!source || !obs_source_is_scene(source)) {
+	if (!canvas) {
 		return;
 	}
+	obs_canvas_enum_scenes(
+		canvas,
+		[](void *param, obs_source_t *src) {
+			signal_handler_disconnect(obs_source_get_signal_handler(src), "rename", source_rename, param);
+			return true;
+		},
+		this);
+}
+
+void CanvasDock::source_rename(void *data, calldata_t *calldata)
+{
+	/* The signal comes on whichever thread renamed the source (obs-websocket's, a script's): copy the names and do
+	 * the work on the UI thread, which owns the docks' widgets. A dock deleted meanwhile drops the queued call. */
+	const auto d = static_cast<CanvasDock *>(data);
+	auto source = (obs_source_t *)calldata_ptr(calldata, "source");
+	if (!d || !source || !obs_source_is_scene(source)) {
+		return;
+	}
+	const char *prev = calldata_string(calldata, "prev_name");
+	const char *next = calldata_string(calldata, "new_name");
+	if (!prev || !next) {
+		return;
+	}
+	const auto prev_name = QString::fromUtf8(prev);
+	const auto new_name = QString::fromUtf8(next);
+	QMetaObject::invokeMethod(d, [d, prev_name, new_name]() { d->SceneRenamed(prev_name, new_name); }, Qt::QueuedConnection);
+}
+
+void CanvasDock::SceneRenamed(const QString &prev_name, const QString &new_name)
+{
+	const auto d = this;
+	const QByteArray new_name_utf8 = new_name.toUtf8();
 
 	struct obs_frontend_source_list scenes = {};
 	obs_frontend_get_scenes(&scenes);
@@ -7693,7 +7725,7 @@ void CanvasDock::source_rename(void *data, calldata_t *calldata)
 			auto item = obs_data_array_item(c, j);
 			auto n = QString::fromUtf8(obs_data_get_string(item, "scene"));
 			if (n == prev_name) {
-				obs_data_set_string(item, "scene", calldata_string(calldata, "new_name"));
+				obs_data_set_string(item, "scene", new_name_utf8.constData());
 			}
 			obs_data_release(item);
 		}
