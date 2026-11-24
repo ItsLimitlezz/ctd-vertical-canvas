@@ -101,7 +101,10 @@ static void ensure_directory(char *path)
  *  - a reference the canvas owns (obs_*_encoder_create, obs_encoder_get_ref, GetStreamVideoEncoder,
  *    GetStreamAudioEncoder, GetRecordVideoEncoder) is released once the encoder has been handed to its output(s).
  * These two hand an owned reference over: the output keeps the encoder alive from then on. When the output refuses
- * it (e.g. it is still active) the encoder already on the output stays and the new one is dropped. */
+ * it (e.g. it is still active) the encoder already on the output stays and the new one is dropped.
+ * Regression guard (#12, crash in obs_encoder_release on stream start): these two are the only obs_encoder_release
+ * calls in the plugin; tests/ctd-regression-guards/check.sh fails otherwise, and tests/ctd-encoder-refs runs them
+ * against real libobs. Anywhere else, hold an owned reference in OBSEncoderAutoRelease. */
 static void output_take_video_encoder(obs_output_t *output, obs_encoder_t *encoder)
 {
 	if (output) {
@@ -487,22 +490,66 @@ static void ctd_vertical_set_output(void *data, calldata_t *cd)
 }
 
 /* CTD: void ctd_vertical_get_output(out bool configured, out string name, out string server, out bool enabled,
- * out bool active). Never returns the key. */
+ * out bool active, out string video_encoder, out bool own_encoder). Never returns the key.
+ * video_encoder: the encoder id the vertical stream uses at its next start (ask libobs for its codec with
+ * obs_get_encoder_codec). own_encoder: true when the vertical canvas has its own stream encoder settings ("Use main OBS
+ * settings" unticked), so video_encoder is its own choice; false when it follows the profile's stream encoder (Simple
+ * or Advanced output mode), which video_encoder then names. Empty when there is no vertical canvas.
+ * video_encoder and own_encoder were added after the first five; callers that don't read them are unaffected. */
 static void ctd_vertical_get_output(void *data, calldata_t *cd)
 {
 	UNUSED_PARAMETER(data);
-	bool configured = false, enabled = false, active = false;
-	std::string name, server;
+	bool configured = false, enabled = false, active = false, own_encoder = false;
+	std::string name, server, video_encoder;
 	ctd_run_on_ui_thread([&] {
 		CanvasDock *dock = ctd_vertical_dock();
-		if (dock)
-			configured = dock->GetCtdStreamOutput(name, server, enabled, active);
+		if (!dock) {
+			return;
+		}
+		configured = dock->GetCtdStreamOutput(name, server, enabled, active);
+		own_encoder = dock->OwnStreamEncoder();
+		video_encoder = dock->GetStreamVideoEncoderId();
 	});
 	calldata_set_bool(cd, "configured", configured);
 	calldata_set_string(cd, "name", name.c_str());
 	calldata_set_string(cd, "server", server.c_str());
 	calldata_set_bool(cd, "enabled", enabled);
 	calldata_set_bool(cd, "active", active);
+	calldata_set_string(cd, "video_encoder", video_encoder.c_str());
+	calldata_set_bool(cd, "own_encoder", own_encoder);
+}
+
+/* CTD: void ctd_vertical_use_profile_encoder(out bool success, out string error)
+ * Turns the vertical canvas's own stream encoder settings off ("Use main OBS settings" ticked), so the vertical stream
+ * uses the profile's stream encoder (H.264 for CTD Relay, which doesn't transcode), and saves config.json. Runs on
+ * the UI thread. Refused while the vertical stream is live or the vertical Settings dialog is open. Nothing to do
+ * (success) when it already follows the profile. If it is changed but config.json can't be saved, success is true and
+ * error says so. The own encoder choice and its settings are kept, so unticking "Use main OBS settings" brings them
+ * back. */
+static void ctd_vertical_use_profile_encoder(void *data, calldata_t *cd)
+{
+	UNUSED_PARAMETER(data);
+	bool success = false, changed = false;
+	std::string error;
+	ctd_run_on_ui_thread([&] {
+		CanvasDock *dock = ctd_vertical_dock();
+		if (!dock) {
+			error = "no vertical canvas";
+			return;
+		}
+		changed = dock->OwnStreamEncoder();
+		success = dock->UseProfileStreamEncoder(error);
+		if (success && changed && !save_canvas()) {
+			error = "changed, but config.json couldn't be saved, so it won't survive a restart";
+		}
+	});
+	if (!success) {
+		blog(LOG_WARNING, "[CTD] vertical: stream encoder not changed: %s", error.c_str());
+	} else if (changed) {
+		blog(LOG_INFO, "[CTD] vertical: stream now uses the profile's stream encoder");
+	}
+	calldata_set_bool(cd, "success", success);
+	calldata_set_string(cd, "error", error.c_str());
 }
 
 static void add_chapter(void *data, calldata_t *cd)
@@ -882,10 +929,12 @@ bool obs_module_load(void)
 			 nullptr);
 	proc_handler_add(ph, "void ctd_vertical_set_output(in string server, in string key, out bool success, out string error)",
 			 ctd_vertical_set_output, nullptr);
-	proc_handler_add(
-		ph,
-		"void ctd_vertical_get_output(out bool configured, out string name, out string server, out bool enabled, out bool active)",
-		ctd_vertical_get_output, nullptr);
+	proc_handler_add(ph,
+			 "void ctd_vertical_get_output(out bool configured, out string name, out string server, out bool enabled, "
+			 "out bool active, out string video_encoder, out bool own_encoder)",
+			 ctd_vertical_get_output, nullptr);
+	proc_handler_add(ph, "void ctd_vertical_use_profile_encoder(out bool success, out string error)",
+			 ctd_vertical_use_profile_encoder, nullptr);
 
 	return true;
 }
@@ -6414,11 +6463,10 @@ obs_encoder_t *CanvasDock::GetStreamVideoEncoder()
 		}
 	}
 
-	/* CTD: CTD Relay (and Twitch) want a 2 s keyframe interval, like CTD OBS's main stream. Only when no value is
-	 * set: a user's explicit value (0 = auto included) is kept. keyint_sec is the property OBS's encoders share
-	 * (x264, NVENC, QSV, AMF, VideoToolbox, VA-API, AV1). */
-	if (!obs_data_has_user_value(video_settings, "keyint_sec"))
-		obs_data_set_int(video_settings, "keyint_sec", CTD_DEFAULT_KEYINT_SEC);
+	/* CTD: CTD Relay (and Twitch) want a 2 s keyframe interval, like CTD OBS's main stream: 2 s when no value is set.
+	 * A user's explicit value is kept, except 0 (auto) while an enabled output feeds CTD Relay (also when it comes
+	 * from the main profile's streamEncoder.json). video_settings is a copy here, so nothing is saved. */
+	obs_data_set_int(video_settings, "keyint_sec", ctd_stream_keyint_sec(video_settings, HasCtdRelayOutput(true)));
 
 	obs_encoder_t *se = nullptr;
 	for (auto it = streamOutputs.begin(); it != streamOutputs.end(); ++it) {
@@ -9128,6 +9176,90 @@ bool CanvasDock::SetCtdStreamOutput(const std::string &server, const std::string
 	UpdateMulti();
 	/* CTD Relay's "Send stream" promises the vertical stream goes with the main one: start/stop it with OBS's main stream */
 	streamingMatchMain = true;
+	KeepCtdKeyint();
+	return true;
+}
+
+/* CTD: an output that feeds CTD Relay is the one SetCtdStreamOutput set (named kCtdOutputName) */
+bool CanvasDock::HasCtdRelayOutput(bool enabled_only) const
+{
+	for (const auto &it : streamOutputs) {
+		if (it.name == kCtdOutputName && (it.enabled || !enabled_only)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/* CTD: store the own stream encoder's keyframe interval as an explicit value: 2 s when none is set, never 0 (auto)
+ * while an output feeds CTD Relay. Before, the 2 s default lived only in the Settings field and at stream start, so a
+ * saved 0 or a missing value reached Relay as "auto". */
+void CanvasDock::KeepCtdKeyint()
+{
+	if (stream_encoder_settings) {
+		obs_data_set_int(stream_encoder_settings, "keyint_sec",
+				 ctd_stream_keyint_sec(stream_encoder_settings, HasCtdRelayOutput(false)));
+	}
+}
+
+/* CTD: the profile's stream encoder id, as GetStreamVideoEncoder reads it when the canvas follows the profile */
+std::string CanvasDock::GetProfileStreamVideoEncoderId()
+{
+	config_t *config = obs_frontend_get_profile_config();
+	if (!config) {
+		return {};
+	}
+	const char *mode = config_get_string(config, "Output", "Mode");
+	const char *id = nullptr;
+	if (mode && strcmp(mode, "Advanced") == 0) {
+		id = config_get_string(config, "AdvOut", "Encoder");
+	} else {
+		const char *simple = config_get_string(config, "SimpleOutput", "StreamEncoder");
+		id = get_simple_output_encoder(simple ? simple : "");
+	}
+	return id ? id : "";
+}
+
+/* CTD: the encoder id the vertical stream uses at its next start: its own, or the profile's ("Use main OBS settings") */
+std::string CanvasDock::GetStreamVideoEncoderId() const
+{
+	return stream_advanced_settings ? stream_encoder : GetProfileStreamVideoEncoderId();
+}
+
+/* CTD: the keyframe interval (s) the vertical stream uses with "Use main OBS settings": the profile's (Advanced output
+ * mode, streamEncoder.json) or 2 s, as GetStreamVideoEncoder applies it */
+int CanvasDock::GetProfileStreamKeyintSec() const
+{
+	config_t *config = obs_frontend_get_profile_config();
+	const char *mode = config ? config_get_string(config, "Output", "Mode") : nullptr;
+	obs_data_t *settings = (mode && strcmp(mode, "Advanced") == 0) ? GetDataFromJsonFile("streamEncoder.json") : nullptr;
+	const int keyint = ctd_stream_keyint_sec(settings, HasCtdRelayOutput(true));
+	obs_data_release(settings);
+	return keyint;
+}
+
+/* CTD: "Use main OBS settings" for the stream (proc ctd_vertical_use_profile_encoder). Like ticking it in Settings:
+ * the stream outputs drop the encoder they hold (each output releases its own reference), so the next start builds
+ * the profile's encoder. stream_encoder and stream_encoder_settings are kept for when it is unticked again. */
+bool CanvasDock::UseProfileStreamEncoder(std::string &error)
+{
+	if (StreamingActive()) {
+		error = "the vertical stream is live; stop it first";
+		return false;
+	}
+	if (configDialog && configDialog->isVisible()) {
+		error = "the vertical Settings dialog is open; close it first";
+		return false;
+	}
+	if (!stream_advanced_settings) {
+		return true;
+	}
+	stream_advanced_settings = false;
+	for (auto &it : streamOutputs) {
+		if (it.output && !obs_output_active(it.output)) {
+			obs_output_set_video_encoder(it.output, nullptr);
+		}
+	}
 	return true;
 }
 

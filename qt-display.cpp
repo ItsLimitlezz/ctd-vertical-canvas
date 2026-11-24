@@ -67,7 +67,9 @@ protected:
 			break;
 		/* CTD: no re-create on QEvent::Expose (minimize, restore, fullscreen, Space changes): Expose
 		 * never clears `destroying` any more, so a display torn down with its surface stays down until
-		 * the surface is really created again. paintEvent / resizeEvent still create a missing one. */
+		 * the surface is really created again. paintEvent / resizeEvent still create a missing one.
+		 * Regression guard (hotfix 0ee5a7f): tests/ctd-regression-guards/check.sh fails if Expose is
+		 * handled here again or SurfaceCreated re-creates the display without queuing it. */
 		default:
 			break;
 		}

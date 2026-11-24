@@ -25,6 +25,17 @@
 #include <util/dstr.h>
 #include <util/config-file.h>
 
+/* CTD: send a checkbox's current state to the handler connected to it (checkStateChanged on Qt 6.7+, stateChanged
+ * before), so rows rebuilt or loaded later get the same enabled / visible state */
+static void EmitCheckState(QCheckBox *checkBox)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+	emit checkBox->checkStateChanged(checkBox->checkState());
+#else
+	emit checkBox->stateChanged(checkBox->checkState());
+#endif
+}
+
 OBSBasicSettings::OBSBasicSettings(CanvasDock *canvas_dock, QMainWindow *parent) : QDialog(parent), canvasDock(canvas_dock)
 {
 	setMinimumWidth(983);
@@ -409,8 +420,10 @@ OBSBasicSettings::OBSBasicSettings(CanvasDock *canvas_dock, QMainWindow *parent)
 				}
 			}
 		}
+		UpdateStreamEncoderRows();
 	});
 	streamingAdvancedLayout->addWidget(streamingUseMain);
+	this->streamingAdvancedLayout = streamingAdvancedLayout;
 
 	auto audioTracks = new QFrame;
 	audioTracks->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
@@ -425,6 +438,17 @@ OBSBasicSettings::OBSBasicSettings(CanvasDock *canvas_dock, QMainWindow *parent)
 	}
 	streamingAdvancedLayout->addRow(QString::fromUtf8(obs_frontend_get_locale_string("Basic.Settings.Output.Adv.AudioTrack")),
 					audioTracks);
+
+	/* CTD: with "Use main OBS settings" ticked these two show the encoder and keyframe interval the stream really
+	 * uses (the profile's), and the own encoder rows below are hidden: they showed the first encoder in the list
+	 * (e.g. SVT-AV1) and a keyframe field that the stream didn't use */
+	streamingMainEncoder = new QLabel;
+	streamingMainEncoder->setTextInteractionFlags(Qt::TextSelectableByMouse);
+	streamingAdvancedLayout->addRow(QString::fromUtf8(obs_frontend_get_locale_string("Basic.Settings.Output.Encoder.Video")),
+					streamingMainEncoder);
+	streamingMainKeyint = new QLabel;
+	streamingMainKeyint->setTextInteractionFlags(Qt::TextSelectableByMouse);
+	streamingAdvancedLayout->addRow(QString::fromUtf8(obs_module_text("KeyframeInterval")), streamingMainKeyint);
 
 	streamingEncoder = new QComboBox;
 	const char *type;
@@ -471,7 +495,9 @@ OBSBasicSettings::OBSBasicSettings(CanvasDock *canvas_dock, QMainWindow *parent)
 			AddProperty(property, stream_encoder_settings, streamingAdvancedLayout, &stream_encoder_property_widgets);
 			obs_property_next(&property);
 		}
-		QMetaObject::invokeMethod(streamingUseMain, "stateChanged", Q_ARG(int, streamingUseMain->checkState()));
+		/* CTD: re-apply "Use main OBS settings" to the new rows (invoking "stateChanged" reached no handler on
+		 * Qt 6.7+, where the handler is connected to checkStateChanged) */
+		EmitCheckState(streamingUseMain);
 	});
 	streamingAdvancedLayout->addRow(QString::fromUtf8(obs_frontend_get_locale_string("Basic.Settings.Output.Encoder.Video")),
 					streamingEncoder);
@@ -1119,6 +1145,8 @@ void OBSBasicSettings::LoadSettings()
 	}
 	obs_data_clear(stream_encoder_settings);
 	obs_data_apply(stream_encoder_settings, canvasDock->stream_encoder_settings);
+	/* CTD: setChecked above only signals a change; apply the state to the rows either way */
+	EmitCheckState(streamingUseMain);
 
 	recordPath->setText(QString::fromUtf8(canvasDock->recordPath));
 
@@ -1293,6 +1321,11 @@ void OBSBasicSettings::SaveSettings()
 					     canvasDock->stream_delay_preserve ? OBS_OUTPUT_DELAY_PRESERVE : 0);
 		}
 	}
+
+	/* CTD: keep the own encoder's keyframe interval as an explicit value (the field's 2 s default included), never 0
+	 * (auto) while an output feeds CTD Relay, so ticking and unticking "Use main OBS settings" can't lose it */
+	obs_data_set_int(stream_encoder_settings, "keyint_sec",
+			 ctd_stream_keyint_sec(stream_encoder_settings, canvasDock->HasCtdRelayOutput(false)));
 
 	auto sa = !streamingUseMain->isChecked();
 	auto se = streamingEncoder->currentData().toString().toUtf8();
@@ -1764,14 +1797,86 @@ void OBSBasicSettings::LoadProperty(obs_property_t *prop, obs_data_t *settings, 
 	}
 }
 
+static void SetFormRowVisible(QFormLayout *layout, QWidget *field, bool visible)
+{
+	if (!layout || !field) {
+		return;
+	}
+	field->setVisible(visible);
+	int row = -1;
+	layout->getWidgetPosition(field, &row, nullptr);
+	auto item = row < 0 ? nullptr : layout->itemAt(row, QFormLayout::LabelRole);
+	if (item && item->widget()) {
+		item->widget()->setVisible(visible);
+	}
+}
+
+static QString CodecName(const char *encoder_id)
+{
+	const char *codec = encoder_id && *encoder_id ? obs_get_encoder_codec(encoder_id) : nullptr;
+	if (!codec) {
+		return QString();
+	}
+	if (astrcmpi(codec, "h264") == 0) {
+		return QStringLiteral("H.264");
+	}
+	if (astrcmpi(codec, "hevc") == 0) {
+		return QStringLiteral("HEVC");
+	}
+	if (astrcmpi(codec, "av1") == 0) {
+		return QStringLiteral("AV1");
+	}
+	return QString::fromUtf8(codec).toUpper();
+}
+
+/* CTD: "Use main OBS settings" ticked: show the profile's encoder and keyframe interval read-only, hide the own
+ * encoder and its settings. Unticked: the reverse, each own setting row as its encoder's properties say. */
+void OBSBasicSettings::UpdateStreamEncoderRows()
+{
+	const bool use_main = streamingUseMain->isChecked();
+	SetFormRowVisible(streamingAdvancedLayout, streamingMainEncoder, use_main);
+	SetFormRowVisible(streamingAdvancedLayout, streamingMainKeyint, use_main);
+	SetFormRowVisible(streamingAdvancedLayout, streamingEncoder, !use_main);
+	for (const auto &kv : stream_encoder_property_widgets) {
+		SetFormRowVisible(streamingAdvancedLayout, kv.second, !use_main && obs_property_visible(kv.first));
+	}
+	if (!use_main) {
+		return;
+	}
+
+	for (QLabel *label : {streamingMainEncoder, streamingMainKeyint}) {
+		label->setEnabled(true);
+		int row = -1;
+		streamingAdvancedLayout->getWidgetPosition(label, &row, nullptr);
+		auto item = row < 0 ? nullptr : streamingAdvancedLayout->itemAt(row, QFormLayout::LabelRole);
+		if (item && item->widget()) {
+			item->widget()->setEnabled(true);
+		}
+	}
+
+	const std::string id = CanvasDock::GetProfileStreamVideoEncoderId();
+	const char *display = id.empty() ? nullptr : obs_encoder_get_display_name(id.c_str());
+	QString encoder = display ? QString::fromUtf8(display) : QString::fromStdString(id);
+	const QString codec = CodecName(id.c_str());
+	if (!codec.isEmpty() && !encoder.contains(codec, Qt::CaseInsensitive)) {
+		encoder += QStringLiteral(" (%1)").arg(codec);
+	}
+	streamingMainEncoder->setText(QString::fromUtf8(obs_module_text("FromMainSettings")).arg(encoder));
+	const int keyint = canvasDock->GetProfileStreamKeyintSec();
+	streamingMainKeyint->setText(QString::fromUtf8(obs_module_text("FromMainSettings"))
+					     .arg(keyint > 0 ? QStringLiteral("%1 s").arg(keyint)
+							     : QString::fromUtf8(obs_module_text("KeyframeIntervalAuto"))));
+}
+
 void OBSBasicSettings::RefreshProperties(std::map<obs_property_t *, QWidget *> *widgets, QFormLayout *layout)
 {
 	if (widgets == &stream_encoder_property_widgets) {
 		obs_property_t *property = obs_properties_first(stream_encoder_properties);
 		while (property) {
 			auto widget = widgets->at(property);
-			auto visible = obs_property_visible(property);
-			if (widget->isVisible() != visible) {
+			/* CTD: own encoder rows stay hidden while "Use main OBS settings" is ticked */
+			auto visible = obs_property_visible(property) && !streamingUseMain->isChecked();
+			if (widget->isHidden() == visible) {
 				widget->setVisible(visible);
 				int row = 0;
 				layout->getWidgetPosition(widget, &row, nullptr);
