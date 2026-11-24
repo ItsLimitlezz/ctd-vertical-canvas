@@ -37,6 +37,18 @@
 /* CTD: the vertical stream's keyframe interval when the user hasn't set one (CTD Relay and Twitch want 2 s) */
 #define CTD_DEFAULT_KEYINT_SEC 2
 
+/* CTD: the keyframe interval (s) the vertical stream uses with encoder settings `settings` (nullptr = none set): the
+ * user's own value, else 2 s. When an output feeds CTD Relay, never 0 (auto): Relay needs 2 s keyframes.
+ * keyint_sec is the property OBS's encoders share (x264, NVENC, QSV, AMF, VideoToolbox, VA-API, AV1). */
+static inline int ctd_stream_keyint_sec(obs_data_t *settings, bool feeds_relay)
+{
+	if (!settings || !obs_data_has_user_value(settings, "keyint_sec")) {
+		return CTD_DEFAULT_KEYINT_SEC;
+	}
+	const int keyint = (int)obs_data_get_int(settings, "keyint_sec");
+	return (keyint <= 0 && feeds_relay) ? CTD_DEFAULT_KEYINT_SEC : keyint;
+}
+
 enum class ItemHandle : uint32_t {
 	None = 0,
 	TopLeft = ITEM_TOP | ITEM_LEFT,
@@ -467,6 +479,14 @@ public:
 	// CTD: set/read the stream output CTD Relay feeds (procs ctd_vertical_set_output / ctd_vertical_get_output)
 	bool SetCtdStreamOutput(const std::string &server, const std::string &key, std::string &error);
 	bool GetCtdStreamOutput(std::string &name, std::string &server, bool &enabled, bool &active);
+	// CTD: the stream's video encoder (ctd_vertical_get_output / ctd_vertical_use_profile_encoder, Settings)
+	inline bool OwnStreamEncoder() const { return stream_advanced_settings; }
+	std::string GetStreamVideoEncoderId() const;
+	static std::string GetProfileStreamVideoEncoderId();
+	int GetProfileStreamKeyintSec() const;
+	bool HasCtdRelayOutput(bool enabled_only) const;
+	bool UseProfileStreamEncoder(std::string &error);
+	void KeepCtdKeyint();
 	inline obs_output_t *GetRecordOutput() const { return obs_output_get_ref(recordOutput); }
 	void UpdateMulti();
 	void DisableStreamSettings();

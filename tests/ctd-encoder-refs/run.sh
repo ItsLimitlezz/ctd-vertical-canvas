@@ -3,7 +3,8 @@
 # libobs, and shows what the old get -> set -> release(old) pattern did. Not part of the plugin build. Linux only.
 #
 # Needs g++, an X display (xvfb-run is used when there is none) and libobs 31.0 or newer: outputs take their own
-# encoder reference from 31.0 on. Ubuntu 24.04's libobs-dev is 30.0, so point this at a libobs built from ctd-obs:
+# encoder reference from 31.0 on. Ubuntu 24.04's libobs-dev is 30.0, so point this at a libobs built from ctd-obs
+# (obs-studio at tag 33.0.1 works too; it also needs extra-cmake-modules installed):
 #
 #   cmake -S <ctd-obs> -B <build> -G Ninja -DOBS_VERSION_OVERRIDE=33.0.1 -DENABLE_FRONTEND=OFF -DENABLE_PLUGINS=OFF \
 #     -DENABLE_SCRIPTING=OFF -DENABLE_WAYLAND=OFF -DENABLE_PULSEAUDIO=OFF -DENABLE_BROWSER=OFF

@@ -60,6 +60,10 @@ private:
 	QCheckBox *streamingUseMain;
 	std::vector<QRadioButton *> streamingAudioTracks;
 	QComboBox *streamingEncoder;
+	// CTD: what "Use main OBS settings" uses, shown read-only instead of the own encoder rows while it is ticked
+	QFormLayout *streamingAdvancedLayout = nullptr;
+	QLabel *streamingMainEncoder = nullptr;
+	QLabel *streamingMainKeyint = nullptr;
 	obs_properties_t *stream_encoder_properties = nullptr;
 	obs_data_t *stream_encoder_settings = nullptr;
 	std::map<obs_property_t *, QWidget *> stream_encoder_property_widgets;
@@ -98,6 +102,7 @@ private:
 			 std::map<obs_property_t *, QWidget *> *widgets);
 	void LoadProperty(obs_property_t *property, obs_data_t *settings, QWidget *widget);
 	void RefreshProperties(std::map<obs_property_t *, QWidget *> *widgets, QFormLayout *layout);
+	void UpdateStreamEncoderRows();
 	void AddServer();
 
 private slots:

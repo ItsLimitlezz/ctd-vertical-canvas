@@ -16,13 +16,28 @@
 
 #include "helpers.inc"
 
-static const char *nm(void *) { return "dummy"; }
-static void *enc_create(obs_data_t *, obs_encoder_t *) { return (void *)1; }
+static const char *nm(void *)
+{
+	return "dummy";
+}
+static void *enc_create(obs_data_t *, obs_encoder_t *)
+{
+	return (void *)1;
+}
 static void enc_destroy(void *) {}
-static bool enc_encode(void *, struct encoder_frame *, struct encoder_packet *, bool *) { return false; }
-static void *out_create(obs_data_t *, obs_output_t *) { return (void *)1; }
+static bool enc_encode(void *, struct encoder_frame *, struct encoder_packet *, bool *)
+{
+	return false;
+}
+static void *out_create(obs_data_t *, obs_output_t *)
+{
+	return (void *)1;
+}
 static void out_destroy(void *) {}
-static bool out_start(void *) { return false; }
+static bool out_start(void *)
+{
+	return false;
+}
 static void out_stop(void *, uint64_t) {}
 static void out_packet(void *, struct encoder_packet *) {}
 
@@ -94,8 +109,9 @@ static bool alive(const char *name)
 static int alive_count()
 {
 	int n = 0;
-	for (auto &w : watched)
+	for (auto &w : watched) {
 		n += alive(w.name.c_str()) ? 1 : 0;
+	}
 	return n;
 }
 static obs_encoder_t *venc(const char *id, const char *name)
@@ -126,9 +142,9 @@ static void old_swap_video(obs_output_t *o, obs_encoder_t *new_enc /* owned */)
 static void old_plain_path()
 {
 	obs_output_t *stream = out("stream");
-	old_swap_video(stream, venc("dummy_venc_a", "A"));            // first start
+	old_swap_video(stream, venc("dummy_venc_a", "A"));                                 // first start
 	old_swap_video(stream, obs_encoder_get_ref(obs_output_get_video_encoder(stream))); // restart, same encoder
-	old_swap_video(stream, venc("dummy_venc_b", "B"));            // encoder changed
+	old_swap_video(stream, venc("dummy_venc_b", "B"));                                 // encoder changed
 	CHECK(!alive("A"), "old encoder destroyed after the change");
 	CHECK(alive("B"), "new encoder alive");
 	auto e = obs_output_get_video_encoder(stream);
@@ -192,8 +208,9 @@ static void new_sequences()
 	obs_output_set_video_encoder(replay, obs_output_get_video_encoder(record));
 	output_take_audio_encoder(record, aenc("RA0"), 0);
 	output_take_audio_encoder(replay, obs_encoder_get_ref(obs_output_get_audio_encoder(record, 0)), 0);
-	for (size_t idx = 1; idx < MAX_AUDIO_MIXES; idx++)
+	for (size_t idx = 1; idx < MAX_AUDIO_MIXES; idx++) {
 		obs_output_set_audio_encoder(record, nullptr, idx);
+	}
 
 	// stream encoder changed: both stream outputs get the new one
 	{
@@ -234,10 +251,13 @@ static void new_sequences()
 	CHECK(!alive("RA0"), "record audio encoder destroyed with its last output");
 	obs_output_release(s1);
 	CHECK(alive_count() == 0, "no encoder left after the last output is released");
-	if (alive_count())
-		for (auto &w : watched)
-			if (alive(w.name.c_str()))
+	if (alive_count()) {
+		for (auto &w : watched) {
+			if (alive(w.name.c_str())) {
 				printf("    leaked: %s\n", w.name.c_str());
+			}
+		}
+	}
 }
 
 static int run_case(const char *title, void (*fn)())
@@ -262,8 +282,9 @@ static int run_case(const char *title, void (*fn)())
 
 int main()
 {
-	if (!getenv("REFTEST_VERBOSE"))
+	if (!getenv("REFTEST_VERBOSE")) {
 		base_set_log_handler([](int, const char *, va_list, void *) {}, nullptr);
+	}
 	if (!obs_startup("en-US", nullptr, nullptr)) {
 		printf("obs_startup failed (libobs needs an X display on Linux: use xvfb-run)\n");
 		return 2;
